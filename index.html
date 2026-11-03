@@ -83,6 +83,16 @@ button:disabled { opacity: .45; cursor: default; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .stat { background: var(--surface2); border-radius: 10px; padding: 10px 12px; }
 .stat b { display: block; font-family: var(--mono); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.reveal-row { display: flex; gap: 14px; align-items: flex-start; }
+.cover { width: 96px; max-width: 32%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
+input[type="number"], select { font: inherit; font-size: 16px; color: var(--fg); background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; min-height: 40px; padding: 0 8px; }
+.tier-letter { font-family: var(--display); font-weight: 800; font-size: 1.6rem; width: 46px; height: 46px; display: grid; place-items: center; border: 2px solid var(--c); color: var(--c); border-radius: 10px; flex: none; }
+ul.list li.rk-item { flex-direction: column; align-items: stretch; gap: 8px; }
+.rk-name { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.rk-n { font-family: var(--mono); color: var(--muted); min-width: 2.2em; }
+.rk-ctl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rk-ctl button { padding: 6px 12px; min-height: 40px; }
+.rk-pos { width: 68px; }
 .vol { display: flex; align-items: center; gap: 12px; }
 .vol input { flex: 1; min-width: 0; }
 input[type="range"] { width: 100%; accent-color: var(--accent); height: 28px; margin: 0; }
@@ -172,7 +182,8 @@ const saveFavs = () => lsSet("quiz-favs", [...favs]);
 let mar = lsGet("quiz-marathon", null);
 const mainTitle = s => (keyTitles.get(keyOf.get(s.anime)) || [s.anime])[0];
 let titles = lsGet("quiz-titles", null);
-let aliasList = [], keyOf = new Map(), keyTitles = new Map(), matchedCount = 0;
+let aliasList = [], keyOf = new Map(), keyTitles = new Map(), keyCover = new Map(), matchedCount = 0;
+let alUser = lsGet("quiz-aluser", "xagrest");
 function entryTitles(e) {
   const out = [], seen = new Set();
   const add = (t, min) => { t = (t || "").trim(); const n = norm(t); if (!t || n.length < min || seen.has(n)) return; seen.add(n); out.push(t); };
@@ -181,7 +192,7 @@ function entryTitles(e) {
   return out;
 }
 function buildAliases() {
-  aliasList = []; keyOf = new Map(); keyTitles = new Map(); matchedCount = 0;
+  aliasList = []; keyOf = new Map(); keyTitles = new Map(); keyCover = new Map(); matchedCount = 0;
   const idx = new Map();
   (titles || []).forEach((e, i) => entryTitles(e).forEach(t => { const n = norm(t); if (n && !idx.has(n)) idx.set(n, i); }));
   for (const name of animeNames) {
@@ -189,7 +200,7 @@ function buildAliases() {
     const key = i === undefined ? "f:" + name : "e:" + i;
     if (i !== undefined) matchedCount++;
     keyOf.set(name, key);
-    if (!keyTitles.has(key)) keyTitles.set(key, i === undefined ? [name] : entryTitles(titles[i]));
+    if (!keyTitles.has(key)) { keyTitles.set(key, i === undefined ? [name] : entryTitles(titles[i])); keyCover.set(key, i === undefined ? "" : (titles[i].cover || "")); }
   }
   for (const [key, list] of keyTitles) for (const t of list) aliasList.push({ text: t, nn: norm(t), key });
 }
@@ -229,9 +240,11 @@ function home(note) {
       <input id="files" type="file" accept="audio/*,.mp3" multiple hidden>
       <div id="imp" class="msg">${note || ""}</div>
       ${songs.length ? `<div class="label">Tytuły angielskie i japońskie</div>
-      <p class="muted small">${titles ? `Wczytano ${titles.length} tytułów, dopasowano ${matchedCount} z ${animeNames.length} anime.` : "Wczytaj plik tytuly.json (z komputera, skrypt przygotuj_tytuly.py), a quiz przyjmie też angielskie i japońskie nazwy."}</p>
+      <p class="muted small">${titles ? `Wczytano ${titles.length} tytułów, dopasowano ${matchedCount} z ${animeNames.length} anime.` : "Pobierz tytuły z AniList (wpisz swój nick) albo wczytaj plik tytuly.json. Quiz przyjmie wtedy też angielskie i japońskie nazwy i pokaże okładki."}</p>
       <label class="btn" style="text-align:center;display:block" for="tit">${titles ? "Wczytaj tytuly.json ponownie" : "Wczytaj tytuly.json"}</label>
-      <input id="tit" type="file" accept=".json,application/json" hidden>` : ""}
+      <input id="tit" type="file" accept=".json,application/json" hidden>
+      <div class="label">Albo pobierz z AniList</div>
+      <div class="row" style="flex-wrap:nowrap"><input id="alu" type="text" value="${esc(alUser)}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Nick na AniList"><button id="alget">Pobierz</button></div>` : ""}
       ${songs.length ? `<button id="clear" class="small">Wyczyść bibliotekę</button>` : ""}
     </section>
     ${songs.length ? `
@@ -249,7 +262,7 @@ function home(note) {
         <div><div class="label">Pula</div>${seg("source", [["all", "Wszystkie"], ["miss", `Moje błędy (${miss})`], ["fav", `Ulubione (${nFav})`]], cfg.source)}</div>`
       : `<p class="muted small">Każda piosenka pada raz, w losowej kolejności. Postęp zapisuje się po każdej odpowiedzi, więc możesz przerwać i wrócić.</p>
         ${mar ? `<div class="bar" aria-label="Postęp"><i style="width:${marPct}%"></i></div><p class="small">${marDone ? "Ukończone: " : ""}${mar.i} z ${mar.order.length} piosenek · trafione ${mar.ok} z ${mar.n}</p>` : ""}`}
-      <p class="muted small">Fragment startuje od początku piosenki: najpierw 1 s, potem możesz wydłużyć do 2 s i do 5 s (mniej punktów za każde wydłużenie). Na końcu możesz odpalić całą piosenkę i ją przewijać, wtedy trafienie daje 0 pkt.</p>
+      <p class="muted small">Fragment startuje od początku piosenki: najpierw 0,5 s, potem możesz wydłużyć do 1 s, 2 s i 5 s (od 4 do 1 punktu, im krócej, tym więcej). Na końcu możesz odpalić całą piosenkę i ją przewijać, wtedy trafienie daje 0 pkt.</p>
       <label class="chk"><input id="shownum" type="checkbox" ${cfg.showNum ? "checked" : ""}> <span>Pokaż w odpowiedzi numer z nazwy pliku (np. OP2)</span></label>
       ${cfg.mode === "quick" ? `<button id="start" class="primary big">Start</button>`
         : mar ? `<button id="cont" class="primary big">${marDone ? "Zobacz wynik" : "Kontynuuj"}</button><button id="restart">Zacznij od nowa</button>`
@@ -259,9 +272,11 @@ function home(note) {
       <div class="row spread"><h2>Ulubione</h2><span class="muted small">${nFav}</span></div>
       <p class="muted small">Gwiazdkę dodajesz po odpowiedzi w quizie. Z listy możesz odsłuchać całe piosenki.</p>
       <button id="favs">Otwórz listę ulubionych</button>
+      <button id="rankbtn">Ranking: tiery S–C i Top 100</button>
     </section>` : ""}`;
   const f = document.getElementById("files");
   f.onchange = () => importFiles([...f.files]);
+  const ag = document.getElementById("alget"); if (ag) ag.onclick = fetchTitles;
   const t = document.getElementById("tit");
   if (t) t.onchange = async () => {
     try { const arr = JSON.parse(await t.files[0].text()); if (!Array.isArray(arr)) throw 0; titles = arr; lsSet("quiz-titles", arr); buildAliases(); home(`Tytuły wczytane, dopasowano ${matchedCount} z ${animeNames.length} anime.`); }
@@ -284,6 +299,7 @@ function home(note) {
   if (ct) ct.onclick = () => { if (marDone) { game = { mode: "marathon", log: [], queue: [], i: 0 }; result(); } else startMarathon(false); };
   twoTap("restart", "Na pewno? Dotknij jeszcze raz", () => startMarathon(true));
   const fv = document.getElementById("favs"); if (fv) fv.onclick = favScreen;
+  const rb = document.getElementById("rankbtn"); if (rb) rb.onclick = rankScreen;
   const pb = document.getElementById("player"); if (pb) pb.onclick = playerScreen;
 }
 
@@ -340,16 +356,17 @@ function hdr() {
   return `<div class="row spread"><span class="label">${left}</span><span class="timer">${right}</span></div>`;
 }
 
-const STAGES = [1, 2, 5, Infinity];
+const STAGES = [0.5, 1, 2, 5, Infinity];
+const fs = x => String(x).replace(".", ",");
 let seekDrag = false;
 function round() {
   const s = game.queue[game.i];
-  game.cur = { s, stage: 0, answered: false, stopAt: 1 };
+  game.cur = { s, stage: 0, answered: false, stopAt: STAGES[0] };
   $app.innerHTML = `
     ${hdr()}
     <section class="card">
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" disabled aria-label="Przewijanie">
-      <div class="row spread"><span class="timer" id="tm">0.0 / 1 s</span><span class="muted small">Z którego anime jest ten utwór?</span></div>
+      <div class="row spread"><span class="timer" id="tm">0.0 / 0,5 s</span><span class="muted small">Z którego anime jest ten utwór?</span></div>
       <div class="row">
         <button id="pp">Pauza</button>
         <button id="again">Powtórz</button>
@@ -376,6 +393,7 @@ function round() {
   document.getElementById("more").onclick = () => { if (game.cur.stage < STAGES.length - 1) { game.cur.stage++; updateMore(); playClip(); } };
   document.getElementById("idk").onclick = () => answer(null);
   document.getElementById("quit").onclick = () => { stopAudio(); if (game.mode === "marathon" || !game.log.length) home(); else result(); };
+  setSession("Zgadnij anime", "Quiz", "");
   updateMore(); playClip();
   inp.focus({ preventScroll: true });
 }
@@ -383,7 +401,7 @@ function updateMore() {
   const c = game.cur, m = document.getElementById("more"); if (!m) return;
   const last = c.stage >= STAGES.length - 1;
   const nx = STAGES[c.stage + 1];
-  m.textContent = last ? "Cała piosenka włączona" : nx === Infinity ? "Cała piosenka (0 pkt)" : `Dłużej: ${nx} s (−1 pkt)`;
+  m.textContent = last ? "Cała piosenka włączona" : nx === Infinity ? "Cała piosenka (0 pkt)" : `Dłużej: ${fs(nx)} s (−1 pkt)`;
   m.disabled = last;
 }
 function matches(v) {
@@ -422,7 +440,7 @@ function playClip() {
   applyVol(audio);
   const go = () => { audio.currentTime = 0; audio.play().catch(() => {}); };
   if (audio.readyState >= 1) go(); else audio.addEventListener("loadedmetadata", go, { once: true });
-  tick = setInterval(onTick, 40);
+  tick = setInterval(onTick, 15);
 }
 function togglePause() {
   if (!audio) { if (game.cur && !game.cur.answered) playClip(); return; }
@@ -449,7 +467,7 @@ function onTick() {
     sk.disabled = !free;
     if (!seekDrag) sk.value = Math.min(t, Number(sk.max));
   }
-  if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1)} / ${len} s`;
+  if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1).replace(".", ",")} / ${fs(len)} s`;
   if (t >= len && !audio.paused) audio.pause();
   if (pp) pp.textContent = audio.paused && !(t >= len && !c.answered) ? "Wznów" : audio.paused ? "Odtwórz" : "Pauza";
 }
@@ -460,7 +478,7 @@ function answer(guess) {
   const c = game.cur; if (c.answered) return; c.answered = true;
   const key = keyOf.get(c.s.anime);
   const right = guess !== null && aliasList.some(a => a.nn === norm(guess) && a.key === key);
-  const pts = right ? Math.max(0, 3 - c.stage) : 0;
+  const pts = right ? Math.max(0, 4 - c.stage) : 0;
   game.score += pts;
   game.streak = right ? game.streak + 1 : 0;
   game.best = Math.max(game.best, game.streak);
@@ -474,6 +492,7 @@ function answer(guess) {
   const kind = c.s.type === "ED" ? "Ending" : "Opening";
   const num = cfg.showNum && c.s.slug ? ` <span class="chip">${esc(c.s.slug)}</span>` : "";
   const list = keyTitles.get(key) || [c.s.anime];
+  const cover = keyCover.get(key) || "";
   $app.innerHTML = `
     ${hdr()}
     <section class="card">
@@ -483,12 +502,16 @@ function answer(guess) {
       <div class="row spread"><span class="timer" id="tm"></span></div>
       ${volHtml()}
       <div class="label">To było</div>
-      <div class="answer">${esc(list[0])}</div>
-      ${list.length > 1 ? `<p class="muted small">${list.slice(1, 4).map(esc).join(" · ")}</p>` : ""}
+      <div class="reveal-row">
+        ${cover ? `<img class="cover" src="${esc(cover)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+        <div style="min-width:0"><div class="answer">${esc(list[0])}</div>
+        ${list.length > 1 ? `<p class="muted small">${list.slice(1, 4).map(esc).join(" · ")}</p>` : ""}</div>
+      </div>
       <div><span class="chip">${kind}</span>${num}</div>
       <div class="row"><button id="pp">Pauza</button><button id="fav" aria-pressed="${favs.has(c.s.name)}">${favs.has(c.s.name) ? "★ W ulubionych" : "☆ Do ulubionych"}</button></div>
       <button id="next" class="primary big">${last ? "Zobacz wynik" : "Dalej"}</button>
     </section>`;
+  setSession(list[0], kind, cover);
   document.getElementById("pp").onclick = togglePause;
   bindSeek();
   const fb = document.getElementById("fav");
@@ -691,11 +714,17 @@ function plPlay(i) {
   plShowNext();
   plShowFav();
   try {
-    navigator.mediaSession.metadata = new MediaMetadata({ title: mainTitle(x), artist: kind, album: "Anime Songs" });
+    setSession(mainTitle(x), kind, keyCover.get(keyOf.get(x.anime)) || "");
     navigator.mediaSession.setActionHandler("play", () => { if (audio) audio.play().catch(() => {}); });
     navigator.mediaSession.setActionHandler("pause", () => { if (audio) audio.pause(); });
     navigator.mediaSession.setActionHandler("nexttrack", plNext);
     navigator.mediaSession.setActionHandler("previoustrack", plPrev);
+  } catch (e) {}
+}
+function setSession(title, artist, cover) {
+  try {
+    const art = cover ? [{ src: cover, sizes: "230x330", type: "image/jpeg" }] : [];
+    navigator.mediaSession.metadata = new MediaMetadata({ title, artist, album: "Anime Songs", artwork: art });
   } catch (e) {}
 }
 function plOnTick() {
@@ -785,6 +814,149 @@ function visLoop() {
     }
   }
   g.globalAlpha = 1;
+}
+
+/* ---------- titles from AniList ---------- */
+async function fetchTitles() {
+  const msg = t => { const o = document.getElementById("imp"); if (o) o.textContent = t; };
+  const u = (document.getElementById("alu").value || "").trim();
+  if (!u) { msg("Wpisz nick z AniList."); return; }
+  alUser = u; lsSet("quiz-aluser", u);
+  msg("Pobieram tytuły z AniList…");
+  const q = "query ($user: String) { MediaListCollection(userName: $user, type: ANIME) { lists { entries { status media { id title { romaji english native } synonyms coverImage { large } } } } } }";
+  try {
+    const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ query: q, variables: { user: u } }) });
+    const j = await r.json();
+    if (j.errors) throw new Error(j.errors[0].message);
+    const seen = new Set(), out = [];
+    for (const l of j.data.MediaListCollection.lists) for (const e of l.entries) {
+      if (e.status === "DROPPED" || e.status === "PLANNING") continue;
+      const m = e.media; if (seen.has(m.id)) continue; seen.add(m.id);
+      const t = m.title || {};
+      out.push({ id: m.id, english: t.english || "", romaji: t.romaji || "", native: t.native || "", synonyms: m.synonyms || [], cover: (m.coverImage && m.coverImage.large) || "" });
+    }
+    if (!out.length) throw new Error("lista jest pusta albo prywatna");
+    titles = out; lsSet("quiz-titles", out); buildAliases();
+    home(`Pobrano ${out.length} tytułów z AniList, dopasowano ${matchedCount} z ${animeNames.length} anime.`);
+  } catch (e) { msg("Nie udało się pobrać tytułów: " + ((e && e.message) || e) + ". Ta wersja strony może blokować połączenie z AniList, wtedy użyj pliku tytuly.json."); }
+}
+
+/* ---------- ranking (tiers and Top 100) ---------- */
+const TIERS = ["S", "A", "B", "C"];
+const TCOL = { S: "var(--bad)", A: "var(--accent-text)", B: "var(--good)", C: "var(--muted)" };
+let rank = lsGet("quiz-rank", null);
+function rankInit() {
+  if (!rank || typeof rank !== "object") rank = {};
+  rank.mode = rank.mode === "top" ? "top" : "tiers";
+  rank.tab = rank.tab === "ED" ? "ED" : "OP";
+  rank.tiers = rank.tiers || {}; rank.top = rank.top || {};
+  for (const t of ["OP", "ED"]) {
+    rank.tiers[t] = rank.tiers[t] || {};
+    for (const T of TIERS) if (!Array.isArray(rank.tiers[t][T])) rank.tiers[t][T] = [];
+    if (!Array.isArray(rank.top[t])) rank.top[t] = [];
+  }
+}
+rankInit();
+const saveRank = () => lsSet("quiz-rank", rank);
+let rkPlaying = null, rkMsg = "";
+const rkArrays = () => rank.mode === "tiers" ? TIERS.map(T => rank.tiers[rank.tab][T]) : [rank.top[rank.tab]];
+function rkFind(name) { for (const arr of rkArrays()) { const i = arr.indexOf(name); if (i >= 0) return { arr, i }; } return null; }
+const rkSong = name => songs.find(x => x.name === name);
+function songTitle(x) { const m = x.name.replace(/\.[^.]+$/, "").match(/^(.+?) - (?:OP|ED)[\w-]* - (.+)$/i); return m ? m[2] : ""; }
+function rkRow(name, o) {
+  const x = rkSong(name); if (!x) return "";
+  const n = esc(name);
+  return `<li class="rk-item"><div class="rk-name">${o.idx ? `<span class="rk-n">${o.idx}</span>` : ""}<div style="min-width:0"><b>${esc(mainTitle(x))}</b><div class="muted small">${esc(songTitle(x))}${cfg.showNum && x.slug ? " · " + esc(x.slug) : ""}</div></div></div>
+    <div class="rk-ctl">
+      ${o.pos ? `<input type="number" class="rk-pos" min="1" max="${o.max}" value="${o.idx}" data-pos="${n}" aria-label="Pozycja">` : ""}
+      ${o.tier ? `<select data-mv="${n}" aria-label="Przenieś do tieru"><option value="">Tier…</option>${TIERS.filter(T => T !== o.tier).map(T => `<option value="${T}">→ ${T}</option>`).join("")}</select>` : ""}
+      <button data-act="up" data-n="${n}" aria-label="Wyżej">▲</button><button data-act="down" data-n="${n}" aria-label="Niżej">▼</button>
+      <button data-act="play" data-n="${n}" aria-label="Odtwórz">${rkPlaying === name ? "■" : "▶"}</button>
+      <button data-act="rm" data-n="${n}" aria-label="Usuń z rankingu">✕</button>
+    </div></li>`;
+}
+function rankScreen() { stopAudio(); rkPlaying = null; rkMsg = ""; rkRender(); }
+function rkRender() {
+  const y = window.scrollY, tab = rank.tab, isT = rank.mode === "tiers";
+  const sg = (key, opts, cur) => `<div class="seg" role="group" aria-label="${key}">${opts.map(([v, t]) => `<button data-rkset="${key}" data-v="${v}" aria-pressed="${cur === v}">${t}</button>`).join("")}</div>`;
+  const unr = songs.filter(x => x.type === tab && favs.has(x.name) && !rkFind(x.name)).sort(plCmp);
+  let body;
+  if (isT) {
+    body = TIERS.map(T => {
+      const arr = rank.tiers[tab][T].filter(rkSong);
+      return `<section class="card"><div class="row" style="flex-wrap:nowrap"><span class="tier-letter" style="--c:${TCOL[T]}">${T}</span><span class="muted small">${arr.length} ${arr.length === 1 ? "piosenka" : "piosenek"}</span></div>
+        ${arr.length ? `<ul class="list">${arr.map(n => rkRow(n, { tier: T })).join("")}</ul>` : `<p class="muted small">Pusto. Dodaj piosenki z listy „Do ocenienia" niżej.</p>`}</section>`;
+    }).join("");
+  } else {
+    const arr = rank.top[tab].filter(rkSong);
+    body = `<section class="card"><div class="row spread"><h2>Top 100 ${tab === "OP" ? "openingów" : "endingów"}</h2><span class="muted small">${arr.length} / 100</span></div>
+      ${arr.length ? `<ul class="list">${arr.map((n, i) => rkRow(n, { idx: i + 1, pos: true, max: arr.length })).join("")}</ul>` : `<p class="muted small">Pusto. Dodaj piosenki z listy „Do ocenienia" niżej.</p>`}</section>`;
+  }
+  const unrHtml = unr.map(x => {
+    const n = esc(x.name);
+    return `<li class="rk-item"><div class="rk-name"><div style="min-width:0"><b>${esc(mainTitle(x))}</b><div class="muted small">${esc(songTitle(x))}${cfg.showNum && x.slug ? " · " + esc(x.slug) : ""}</div></div></div>
+      <div class="rk-ctl">${isT ? TIERS.map(T => `<button data-act="place" data-t="${T}" data-n="${n}" style="color:${TCOL[T]}">${T}</button>`).join("") : `<button data-act="add" data-n="${n}">+ Dodaj</button>`}
+      <button data-act="play" data-n="${n}" aria-label="Odtwórz">${rkPlaying === x.name ? "■" : "▶"}</button></div></li>`;
+  }).join("");
+  $app.innerHTML = `
+    <header class="row spread"><h1>Ranking</h1><button id="rkback">Wróć</button></header>
+    <section class="card">
+      <div><div class="label">Co oceniasz</div>${sg("tab", [["OP", "Openingi"], ["ED", "Endingi"]], tab)}</div>
+      <div><div class="label">Rodzaj rankingu</div>${sg("mode", [["tiers", "Tiery S, A, B, C"], ["top", "Top 100"]], rank.mode)}</div>
+      <p class="muted small">Openingi i endingi mają osobne rankingi, a każdy rodzaj rankingu zapisuje się osobno. Oceniasz piosenki z ulubionych.</p>
+      ${volHtml()}
+      ${rkMsg ? `<p class="msg">${esc(rkMsg)}</p>` : ""}
+    </section>
+    ${body}
+    <section class="card"><h2>Do ocenienia</h2>
+      ${unr.length ? `<ul class="list">${unrHtml}</ul>` : `<p class="muted small">Brak ${tab === "OP" ? "openingów" : "endingów"} w ulubionych, które czekają na ocenę.</p>`}
+    </section>
+    <section class="card"><div class="label">Dodaj z biblioteki do ulubionych</div>
+      <input id="rkq" type="text" placeholder="Wpisz tytuł anime" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Szukaj w bibliotece">
+      <div id="rkres"></div></section>`;
+  document.getElementById("rkback").onclick = () => { stopAudio(); rkPlaying = null; home(); };
+  $app.querySelectorAll("[data-rkset]").forEach(b => b.onclick = () => { rank[b.dataset.rkset] = b.dataset.v; rkMsg = ""; saveRank(); rkRender(); });
+  $app.querySelectorAll("[data-act]").forEach(b => b.onclick = () => rkAct(b.dataset.act, b.dataset.n, b.dataset.t));
+  $app.querySelectorAll("[data-mv]").forEach(el => el.onchange = () => { if (el.value) rkAct("place", el.dataset.mv, el.value); });
+  $app.querySelectorAll("[data-pos]").forEach(el => el.onchange = () => rkSetPos(el.dataset.pos, Number(el.value)));
+  bindVol();
+  const qi = document.getElementById("rkq"); qi.oninput = rkRenderRes;
+  window.scrollTo(0, y);
+}
+function rkAct(act, name, t) {
+  if (act === "play") { rkPlay(name); return; }
+  rkMsg = "";
+  const f = rkFind(name);
+  if (act === "up" || act === "down") { if (f) { const j = f.i + (act === "up" ? -1 : 1); if (j >= 0 && j < f.arr.length) [f.arr[f.i], f.arr[j]] = [f.arr[j], f.arr[f.i]]; } }
+  else if (act === "rm") { if (f) f.arr.splice(f.i, 1); }
+  else if (act === "place") { if (f) f.arr.splice(f.i, 1); rank.tiers[rank.tab][t].push(name); }
+  else if (act === "add") { if (rank.top[rank.tab].length >= 100) rkMsg = "Top 100 jest pełne."; else rank.top[rank.tab].push(name); }
+  saveRank(); rkRender();
+}
+function rkSetPos(name, pos) {
+  const arr = rank.top[rank.tab], i = arr.indexOf(name); if (i < 0 || !(pos >= 1)) { rkRender(); return; }
+  arr.splice(i, 1); arr.splice(Math.min(arr.length, Math.max(0, Math.round(pos) - 1)), 0, name);
+  saveRank(); rkRender();
+}
+function rkPlay(name) {
+  const same = rkPlaying === name; stopAudio(); rkPlaying = null;
+  if (!same) {
+    const x = rkSong(name);
+    if (x) { audio = new Audio(URL.createObjectURL(x.blob)); applyVol(audio); audio.onended = () => { rkPlaying = null; rkLabels(); }; audio.play().catch(() => {}); rkPlaying = name; }
+  }
+  rkLabels();
+}
+function rkLabels() { $app.querySelectorAll('[data-act="play"]').forEach(b => b.textContent = b.dataset.n === rkPlaying ? "■" : "▶"); }
+function rkRenderRes() {
+  const box = document.getElementById("rkres"), q = norm(document.getElementById("rkq").value);
+  if (!box) return;
+  if (!q) { box.innerHTML = ""; return; }
+  const res = songs.filter(x => x.type === rank.tab && (keyTitles.get(keyOf.get(x.anime)) || [x.anime]).some(t => norm(t).includes(q))).sort(plCmp).slice(0, 12);
+  if (!res.length) { box.innerHTML = `<p class="muted small">Nic nie znaleziono wśród ${rank.tab === "OP" ? "openingów" : "endingów"}.</p>`; return; }
+  box.innerHTML = `<ul class="list">${res.map(x => `<li class="rk-item"><div class="rk-name"><div style="min-width:0"><b>${esc(mainTitle(x))}</b><div class="muted small">${esc(songTitle(x))}</div></div></div>
+    <div class="rk-ctl">${favs.has(x.name) ? `<span class="muted small">W ulubionych</span>` : `<button data-fa="${esc(x.name)}">Dodaj do ulubionych</button>`}<button data-act="play" data-n="${esc(x.name)}" aria-label="Odtwórz">${rkPlaying === x.name ? "■" : "▶"}</button></div></li>`).join("")}</ul>`;
+  box.querySelectorAll("[data-fa]").forEach(b => b.onclick = () => { favs.add(b.dataset.fa); saveFavs(); const v = document.getElementById("rkq").value; rkRender(); const qi = document.getElementById("rkq"); qi.value = v; rkRenderRes(); });
+  box.querySelectorAll("[data-act]").forEach(b => b.onclick = () => rkAct(b.dataset.act, b.dataset.n, b.dataset.t));
 }
 
 /* ---------- boot ---------- */
