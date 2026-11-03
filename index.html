@@ -1,0 +1,796 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="theme-color" content="#14121f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Quiz z moich openingów</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;800&family=DM+Sans:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one narrow column, one screen at a time (library / setup / round / result), thumb-reachable controls at the bottom of each card. */
+:root {
+  --bg: #14121f;
+  --surface: #1e1b30;
+  --surface2: #29254a;
+  --fg: #ece9f7;
+  --muted: #a39fc2;
+  --line: #36315a;
+  --accent: #ffb938;
+  --accent-text: #ffb938;
+  --on-accent: #1a1100;
+  --good: #5fd49a;
+  --bad: #ff7a88;
+  --display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+  --body: "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f3fb; --surface: #ffffff; --surface2: #ece7f7; --fg: #1c1830; --muted: #625c84;
+    --line: #d9d2ec; --accent: #f2a516; --accent-text: #8a5200; --on-accent: #1f1400;
+    --good: #12794b; --bad: #c0273b; color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f6f3fb; --surface: #ffffff; --surface2: #ece7f7; --fg: #1c1830; --muted: #625c84;
+  --line: #d9d2ec; --accent: #f2a516; --accent-text: #8a5200; --on-accent: #1f1400;
+  --good: #12794b; --bad: #c0273b; color-scheme: light;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 16px/1.5 var(--body);
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+main.wide-pl { max-width: 1000px; }
+.pl-grid { display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr); }
+.vis-card canvas { width: 100%; height: 200px; display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; }
+@media (min-width: 900px) {
+  .pl-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .pl-grid > .pl-set, .pl-grid > .pl-now, .pl-grid > .pl-next { grid-column: 1; }
+  .pl-grid > .pl-vis { grid-column: 2; grid-row: 1 / span 4; position: sticky; top: 16px; }
+  .vis-card canvas { height: 380px; }
+}
+h1, h2 { font-family: var(--display); text-wrap: balance; margin: 0; line-height: 1.1; }
+h1 { font-size: 2rem; font-weight: 800; }
+h2 { font-size: 1.25rem; font-weight: 800; }
+p { margin: 0; }
+.muted { color: var(--muted); }
+.small { font-size: .875rem; }
+.label { font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row > * { min-width: 0; }
+.spread { justify-content: space-between; }
+button, .btn {
+  font: inherit; font-weight: 700; color: var(--fg); background: var(--surface2);
+  border: 1px solid var(--line); border-radius: 10px; padding: 11px 16px; min-height: 44px; cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, label:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+button.big { width: 100%; font-size: 1.05rem; padding: 14px; }
+button:disabled { opacity: .45; cursor: default; }
+.seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: var(--surface2); border-radius: 10px; padding: 10px 12px; }
+.stat b { display: block; font-family: var(--mono); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.vol { display: flex; align-items: center; gap: 12px; }
+.vol input { flex: 1; min-width: 0; }
+input[type="range"] { width: 100%; accent-color: var(--accent); height: 28px; margin: 0; }
+input[type="range"]:disabled { opacity: .6; }
+.bar { height: 8px; background: var(--surface2); border-radius: 99px; overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--accent); }
+.timer { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--muted); }
+input[type="text"] {
+  width: 100%; font: inherit; font-size: 16px; color: var(--fg); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 48px;
+}
+.sugg { display: flex; flex-direction: column; gap: 6px; }
+.sugg button { text-align: left; font-weight: 500; overflow-wrap: anywhere; }
+.verdict { font-family: var(--display); font-weight: 800; font-size: 1.5rem; }
+.verdict.ok { color: var(--good); } .verdict.no { color: var(--bad); }
+.answer { font-family: var(--display); font-weight: 800; font-size: 1.6rem; overflow-wrap: anywhere; line-height: 1.15; }
+.chip { display: inline-block; font-family: var(--mono); font-size: .8rem; padding: 3px 9px; border-radius: 99px; background: var(--surface2); border: 1px solid var(--line); }
+ul.list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+ul.list li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.chk { display: flex; gap: 10px; align-items: center; min-height: 44px; }
+.chk input { width: 20px; height: 20px; accent-color: var(--accent); }
+#fav[aria-pressed="true"], #plshuf[aria-pressed="true"] { color: var(--accent-text); border-color: var(--accent); }
+.msg { color: var(--accent-text); font-size: .9rem; }
+@media (prefers-reduced-motion: no-preference) { .bar > i { transition: width .2s linear; } }
+</style>
+
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+</head>
+<body>
+<main id="app" aria-live="polite"></main>
+
+<script>
+"use strict";
+/* ---------- storage: IndexedDB with in-memory fallback ---------- */
+const mem = new Map();
+let db = null;
+function openDb() {
+  return new Promise(res => {
+    try {
+      const rq = indexedDB.open("quiz-anime", 1);
+      rq.onupgradeneeded = () => rq.result.createObjectStore("songs", { keyPath: "name" });
+      rq.onsuccess = () => res(rq.result);
+      rq.onerror = () => res(null);
+    } catch (e) { res(null); }
+  });
+}
+const tx = (mode) => db.transaction("songs", mode).objectStore("songs");
+const reqP = (r) => new Promise((ok, no) => { r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error); });
+async function dbAll() { return db ? reqP(tx("readonly").getAll()) : [...mem.values()]; }
+async function dbPut(rec) { if (db) { await reqP(tx("readwrite").put(rec)); } else mem.set(rec.name, rec); }
+async function dbClear() { if (db) { await reqP(tx("readwrite").clear()); } else mem.clear(); }
+
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
+
+/* ---------- helpers ---------- */
+const $app = document.getElementById("app");
+const norm = s => (s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9぀-ヿ一-鿿]+/g, "");
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.random() * (i + 1) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; };
+function parseName(file) {
+  const stem = file.replace(/\.[^.]+$/, "");
+  const m = stem.match(/^(.+?) - ((?:OP|ED)[\w-]*) - (.+)$/i);
+  if (!m) return { anime: stem, slug: "", type: "OP" };
+  return { anime: m[1].trim(), slug: m[2].toUpperCase(), type: m[2].toUpperCase().startsWith("ED") ? "ED" : "OP" };
+}
+
+/* ---------- state ---------- */
+let songs = [];
+let animeNames = [];
+let stats = lsGet("quiz-stats", {});
+let cfg = Object.assign({ mode: "quick", type: "both", rounds: 10, source: "all", showNum: false }, lsGet("quiz-cfg", {}));
+let favs = new Set(lsGet("quiz-favs", []));
+let vol = Number(lsGet("quiz-vol", 1)); if (!(vol >= 0 && vol <= 1)) vol = 1;
+let gainNode = null;
+function applyVol(a) {
+  try { if (a && a._hooked && gainNode) { a.volume = 1; gainNode.gain.value = vol; } else if (a) a.volume = vol; } catch (e) {}
+}
+const volHtml = () => `<label class="vol"><span class="label">Głośność</span><input id="vol" type="range" min="0" max="1" step="0.01" value="${vol}" aria-label="Głośność"></label>`;
+function bindVol() {
+  const v = document.getElementById("vol"); if (!v) return;
+  v.oninput = () => { vol = Number(v.value); lsSet("quiz-vol", vol); if (gainNode) gainNode.gain.value = vol; applyVol(audio); };
+}
+let pl = Object.assign({ type: "both", source: "all", vis: "bars", shuffle: true }, lsGet("quiz-player", {}));
+let plq = [], pli = -1, plTick = null;
+const saveFavs = () => lsSet("quiz-favs", [...favs]);
+let mar = lsGet("quiz-marathon", null);
+const mainTitle = s => (keyTitles.get(keyOf.get(s.anime)) || [s.anime])[0];
+let titles = lsGet("quiz-titles", null);
+let aliasList = [], keyOf = new Map(), keyTitles = new Map(), matchedCount = 0;
+function entryTitles(e) {
+  const out = [], seen = new Set();
+  const add = (t, min) => { t = (t || "").trim(); const n = norm(t); if (!t || n.length < min || seen.has(n)) return; seen.add(n); out.push(t); };
+  add(e.english, 1); add(e.romaji, 1); add(e.native, 1);
+  (e.synonyms || []).forEach(t => add(t, 3));
+  return out;
+}
+function buildAliases() {
+  aliasList = []; keyOf = new Map(); keyTitles = new Map(); matchedCount = 0;
+  const idx = new Map();
+  (titles || []).forEach((e, i) => entryTitles(e).forEach(t => { const n = norm(t); if (n && !idx.has(n)) idx.set(n, i); }));
+  for (const name of animeNames) {
+    const i = idx.get(norm(name));
+    const key = i === undefined ? "f:" + name : "e:" + i;
+    if (i !== undefined) matchedCount++;
+    keyOf.set(name, key);
+    if (!keyTitles.has(key)) keyTitles.set(key, i === undefined ? [name] : entryTitles(titles[i]));
+  }
+  for (const [key, list] of keyTitles) for (const t of list) aliasList.push({ text: t, nn: norm(t), key });
+}
+let game = null;
+let audio = null;
+let tick = null;
+
+async function reload() {
+  songs = await dbAll();
+  animeNames = [...new Set(songs.map(s => s.anime))].sort((a, b) => a.localeCompare(b));
+  buildAliases();
+}
+function saveCfg() { lsSet("quiz-cfg", cfg); }
+function seg(name, opts, cur) {
+  return `<div class="seg" role="group" aria-label="${name}">` +
+    opts.map(([v, t]) => `<button data-set="${name}" data-v="${v}" aria-pressed="${String(cur) === String(v)}">${t}</button>`).join("") + `</div>`;
+}
+function missedAnime() { return new Set(Object.entries(stats).filter(([, s]) => s.miss > s.ok).map(([n]) => n)); }
+
+/* ---------- screens ---------- */
+function home(note) {
+  stopAudio(); $app.classList.remove("wide-pl");
+  const nOP = songs.filter(s => s.type === "OP").length, nED = songs.length - nOP;
+  const miss = missedAnime().size;
+  const nFav = songs.filter(s => favs.has(s.name)).length;
+  const marDone = mar && mar.i >= mar.order.length;
+  const marPct = mar ? Math.round(mar.i / Math.max(1, mar.order.length) * 100) : 0;
+  $app.innerHTML = `
+    <header class="row spread" style="align-items:flex-end">
+      <div><div class="label">Quiz solo</div><h1>Zgadnij anime</h1></div>
+    </header>
+    <section class="card">
+      <div class="row spread"><h2>Biblioteka</h2><span class="muted small">${songs.length ? `${songs.length} piosenek, ${animeNames.length} anime` : "pusta"}</span></div>
+      ${songs.length ? `<p class="muted small">${nOP} openingów, ${nED} endingów. Pliki są zapisane w tej przeglądarce.</p>
+      ${db ? "" : `<p class="msg">Ta przeglądarka nie pozwala zapisać plików na stałe. Biblioteka zniknie po zamknięciu strony.</p>`}` : `<p class="muted">Wybierz mp3 z folderu <b>Anime Songs</b> na telefonie. Nazwy plików muszą mieć postać <span class="chip">Anime - OP1 - Tytuł.mp3</span>.</p>`}
+      <label class="btn ${songs.length ? "" : "primary"}" style="text-align:center;display:block" for="files">${songs.length ? "Dodaj więcej plików" : "Wczytaj mp3"}</label>
+      <input id="files" type="file" accept="audio/*,.mp3" multiple hidden>
+      <div id="imp" class="msg">${note || ""}</div>
+      ${songs.length ? `<div class="label">Tytuły angielskie i japońskie</div>
+      <p class="muted small">${titles ? `Wczytano ${titles.length} tytułów, dopasowano ${matchedCount} z ${animeNames.length} anime.` : "Wczytaj plik tytuly.json (z komputera, skrypt przygotuj_tytuly.py), a quiz przyjmie też angielskie i japońskie nazwy."}</p>
+      <label class="btn" style="text-align:center;display:block" for="tit">${titles ? "Wczytaj tytuly.json ponownie" : "Wczytaj tytuly.json"}</label>
+      <input id="tit" type="file" accept=".json,application/json" hidden>` : ""}
+      ${songs.length ? `<button id="clear" class="small">Wyczyść bibliotekę</button>` : ""}
+    </section>
+    ${songs.length ? `
+    <section class="card">
+      <h2>Odtwarzacz</h2>
+      <p class="muted small">Zwykłe słuchanie w losowej kolejności: OP, ED albo oba, z ulubionymi i przewijaniem.</p>
+      <button id="player" class="primary big">Otwórz odtwarzacz</button>
+    </section>
+    <section class="card">
+      <h2>Tryb gry</h2>
+      ${seg("mode", [["quick", "Losowe rundy"], ["marathon", "Wszystkie po kolei"]], cfg.mode)}
+      <div><div class="label">${cfg.mode === "quick" ? "Co losować" : "Co przejść (dla nowego przejścia)"}</div>${seg("type", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], cfg.type)}</div>
+      ${cfg.mode === "quick" ? `
+        <div><div class="label">Liczba rund</div>${seg("rounds", [[10, "10"], [20, "20"], [50, "50"], [0, "Bez końca"]], cfg.rounds)}</div>
+        <div><div class="label">Pula</div>${seg("source", [["all", "Wszystkie"], ["miss", `Moje błędy (${miss})`], ["fav", `Ulubione (${nFav})`]], cfg.source)}</div>`
+      : `<p class="muted small">Każda piosenka pada raz, w losowej kolejności. Postęp zapisuje się po każdej odpowiedzi, więc możesz przerwać i wrócić.</p>
+        ${mar ? `<div class="bar" aria-label="Postęp"><i style="width:${marPct}%"></i></div><p class="small">${marDone ? "Ukończone: " : ""}${mar.i} z ${mar.order.length} piosenek · trafione ${mar.ok} z ${mar.n}</p>` : ""}`}
+      <p class="muted small">Fragment startuje od początku piosenki: najpierw 1 s, potem możesz wydłużyć do 2 s i do 5 s (mniej punktów za każde wydłużenie). Na końcu możesz odpalić całą piosenkę i ją przewijać, wtedy trafienie daje 0 pkt.</p>
+      <label class="chk"><input id="shownum" type="checkbox" ${cfg.showNum ? "checked" : ""}> <span>Pokaż w odpowiedzi numer z nazwy pliku (np. OP2)</span></label>
+      ${cfg.mode === "quick" ? `<button id="start" class="primary big">Start</button>`
+        : mar ? `<button id="cont" class="primary big">${marDone ? "Zobacz wynik" : "Kontynuuj"}</button><button id="restart">Zacznij od nowa</button>`
+        : `<button id="startm" class="primary big">Start</button>`}
+    </section>
+    <section class="card">
+      <div class="row spread"><h2>Ulubione</h2><span class="muted small">${nFav}</span></div>
+      <p class="muted small">Gwiazdkę dodajesz po odpowiedzi w quizie. Z listy możesz odsłuchać całe piosenki.</p>
+      <button id="favs">Otwórz listę ulubionych</button>
+    </section>` : ""}`;
+  const f = document.getElementById("files");
+  f.onchange = () => importFiles([...f.files]);
+  const t = document.getElementById("tit");
+  if (t) t.onchange = async () => {
+    try { const arr = JSON.parse(await t.files[0].text()); if (!Array.isArray(arr)) throw 0; titles = arr; lsSet("quiz-titles", arr); buildAliases(); home(`Tytuły wczytane, dopasowano ${matchedCount} z ${animeNames.length} anime.`); }
+    catch (e) { home("Nie udało się odczytać pliku tytuly.json."); }
+  };
+  const twoTap = (id, label, fn) => { const el = document.getElementById(id); if (!el) return; el.onclick = () => { el.textContent = label; el.className = "primary"; el.onclick = fn; }; };
+  const c = document.getElementById("clear");
+  if (c) c.onclick = () => {
+    c.textContent = "Na pewno? Dotknij jeszcze raz"; c.className = "small primary";
+    c.onclick = async () => { await dbClear(); await reload(); home("Biblioteka wyczyszczona."); };
+  };
+  document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
+    const k = b.dataset.set; cfg[k] = (k === "type" || k === "source" || k === "mode") ? b.dataset.v : Number(b.dataset.v);
+    saveCfg(); home();
+  });
+  const sn = document.getElementById("shownum"); if (sn) sn.onchange = () => { cfg.showNum = sn.checked; saveCfg(); };
+  const st = document.getElementById("start"); if (st) st.onclick = startGame;
+  const sm = document.getElementById("startm"); if (sm) sm.onclick = () => startMarathon(true);
+  const ct = document.getElementById("cont");
+  if (ct) ct.onclick = () => { if (marDone) { game = { mode: "marathon", log: [], queue: [], i: 0 }; result(); } else startMarathon(false); };
+  twoTap("restart", "Na pewno? Dotknij jeszcze raz", () => startMarathon(true));
+  const fv = document.getElementById("favs"); if (fv) fv.onclick = favScreen;
+  const pb = document.getElementById("player"); if (pb) pb.onclick = playerScreen;
+}
+
+async function importFiles(files) {
+  const say = t => { const o = document.getElementById("imp"); if (o) o.textContent = t; };
+  say(`Wybrano ${files.length} plików, sprawdzam…`);
+  if (!files.length) { say("Przeglądarka nie przekazała żadnych plików. Spróbuj wybrać mniej plików naraz."); return; }
+  const have = new Set(songs.map(s => s.name));
+  const mp3 = files.filter(f => /\.mp3$/i.test(f.name));
+  const todo = mp3.filter(f => !have.has(f.name));
+  const other = files.length - mp3.length;
+  let n = 0, err = "";
+  say(`Wczytuję 0/${todo.length}…`);
+  for (const f of todo) {
+    try { await dbPut({ name: f.name, ...parseName(f.name), blob: f }); n++; }
+    catch (e) { err = ` Zapis się nie udał przy pliku „${f.name}” (${(e && (e.name || e.message)) || e}).`; break; }
+    say(`Wczytuję ${n}/${todo.length}…`);
+  }
+  try { await reload(); } catch (e) { err += " Błąd odczytu biblioteki: " + ((e && e.message) || e); }
+  home(`Dodano ${n} z ${todo.length} nowych mp3. Już były: ${mp3.length - todo.length}. Inne pliki pominięte: ${other}${other && files[0] ? ` (np. „${files.find(f => !/\.mp3$/i.test(f.name)).name}”)` : ""}.${err}` + (db ? "" : " Uwaga: zapis trwały niedostępny, biblioteka znika po zamknięciu strony."));
+}
+window.addEventListener("unhandledrejection", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + ((e.reason && e.reason.message) || e.reason); });
+window.addEventListener("error", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + e.message; });
+
+function startGame() {
+  let pool = songs.filter(s => cfg.type === "both" || s.type === cfg.type);
+  if (cfg.source === "miss") { const m = missedAnime(); pool = pool.filter(s => m.has(s.anime)); }
+  if (cfg.source === "fav") pool = pool.filter(s => favs.has(s.name));
+  if (!pool.length) { home("Brak piosenek do wylosowania przy tych ustawieniach."); return; }
+  const endless = cfg.rounds === 0, q = shuffle(pool);
+  game = { mode: "quick", endless, pool, queue: endless ? q : q.slice(0, cfg.rounds), i: 0, score: 0, streak: 0, best: 0, log: [] };
+  round();
+}
+function startMarathon(fresh) {
+  const byName = new Map(songs.map(s => [s.name, s]));
+  if (fresh || !mar) {
+    const pool = songs.filter(s => cfg.type === "both" || s.type === cfg.type);
+    if (!pool.length) { home("Brak piosenek tego typu."); return; }
+    mar = { type: cfg.type, order: shuffle(pool).map(s => s.name), i: 0, ok: 0, n: 0, wrong: [] };
+  } else {
+    const had = new Set(mar.order), kept = []; let ni = 0;
+    mar.order.forEach((nm, k) => { if (byName.has(nm)) { kept.push(nm); if (k < mar.i) ni++; } });
+    const extra = shuffle(songs.filter(s => (mar.type === "both" || s.type === mar.type) && !had.has(s.name))).map(s => s.name);
+    mar.order = kept.concat(extra); mar.i = ni;
+  }
+  lsSet("quiz-marathon", mar);
+  game = { mode: "marathon", queue: mar.order.map(nm => byName.get(nm)), i: mar.i, score: 0, streak: 0, best: 0, log: [] };
+  if (game.i >= game.queue.length) result(); else round();
+}
+function hdr() {
+  const m = game.mode === "marathon";
+  const left = m ? `Piosenka ${game.i + 1} z ${game.queue.length}` : game.endless ? `Runda ${game.i + 1}` : `Runda ${game.i + 1} z ${game.queue.length}`;
+  const right = m ? `trafione ${mar.ok} z ${mar.n}` : `pkt ${game.score} · seria ${game.streak}`;
+  return `<div class="row spread"><span class="label">${left}</span><span class="timer">${right}</span></div>`;
+}
+
+const STAGES = [1, 2, 5, Infinity];
+let seekDrag = false;
+function round() {
+  const s = game.queue[game.i];
+  game.cur = { s, stage: 0, answered: false, stopAt: 1 };
+  $app.innerHTML = `
+    ${hdr()}
+    <section class="card">
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" disabled aria-label="Przewijanie">
+      <div class="row spread"><span class="timer" id="tm">0.0 / 1 s</span><span class="muted small">Z którego anime jest ten utwór?</span></div>
+      <div class="row">
+        <button id="pp">Pauza</button>
+        <button id="again">Powtórz</button>
+        <button id="more"></button>
+      </div>
+      ${volHtml()}
+      <input id="ans" type="text" placeholder="Wpisz nazwę anime" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Odpowiedź">
+      <div id="sg" class="sugg"></div>
+      <button id="idk">Nie wiem</button>
+      <button id="quit" class="small">${game.mode === "marathon" ? "Zapisz i wyjdź" : "Zakończ grę"}</button>
+    </section>`;
+  const inp = document.getElementById("ans");
+  inp.oninput = () => suggest(inp.value);
+  inp.onkeydown = e => {
+    if (e.key !== "Enter") return;
+    const q = norm(inp.value); if (!q) return;
+    const exact = aliasList.find(a => a.nn === q);
+    const first = matches(inp.value)[0];
+    answer(exact ? exact.text : first ? first.text : inp.value);
+  };
+  bindSeek();
+  document.getElementById("again").onclick = playClip;
+  document.getElementById("pp").onclick = togglePause;
+  document.getElementById("more").onclick = () => { if (game.cur.stage < STAGES.length - 1) { game.cur.stage++; updateMore(); playClip(); } };
+  document.getElementById("idk").onclick = () => answer(null);
+  document.getElementById("quit").onclick = () => { stopAudio(); if (game.mode === "marathon" || !game.log.length) home(); else result(); };
+  updateMore(); playClip();
+  inp.focus({ preventScroll: true });
+}
+function updateMore() {
+  const c = game.cur, m = document.getElementById("more"); if (!m) return;
+  const last = c.stage >= STAGES.length - 1;
+  const nx = STAGES[c.stage + 1];
+  m.textContent = last ? "Cała piosenka włączona" : nx === Infinity ? "Cała piosenka (0 pkt)" : `Dłużej: ${nx} s (−1 pkt)`;
+  m.disabled = last;
+}
+function matches(v) {
+  const q = norm(v); if (!q) return [];
+  const a = [], b = [], seen = new Set();
+  for (const x of aliasList) {
+    if (seen.has(x.key)) continue;
+    if (x.nn.startsWith(q)) { a.push(x); seen.add(x.key); }
+  }
+  for (const x of aliasList) {
+    if (seen.has(x.key)) continue;
+    if (x.nn.includes(q)) { b.push(x); seen.add(x.key); }
+  }
+  return a.concat(b).slice(0, 6);
+}
+function suggest(v) {
+  const box = document.getElementById("sg");
+  box.innerHTML = matches(v).map(x => {
+    const main = keyTitles.get(x.key)[0];
+    return `<button data-n="${esc(x.text)}">${esc(x.text)}${main !== x.text ? ` <span class="muted small">· ${esc(main)}</span>` : ""}</button>`;
+  }).join("");
+  box.querySelectorAll("button").forEach(b => b.onclick = () => answer(b.dataset.n));
+}
+
+/* ---------- audio ---------- */
+function stopAudio() {
+  clearInterval(tick); tick = null; clearInterval(plTick); plTick = null;
+  if (audio) { try { audio.pause(); } catch (e) {} const u = audio.src; audio.removeAttribute("src"); try { audio.load(); } catch (e) {} if (u) URL.revokeObjectURL(u); audio = null; }
+}
+function playClip() {
+  const c = game.cur;
+  stopAudio();
+  c.stopAt = STAGES[c.stage];
+  audio = new Audio(); audio.preload = "auto";
+  audio.src = URL.createObjectURL(c.s.blob);
+  applyVol(audio);
+  const go = () => { audio.currentTime = 0; audio.play().catch(() => {}); };
+  if (audio.readyState >= 1) go(); else audio.addEventListener("loadedmetadata", go, { once: true });
+  tick = setInterval(onTick, 40);
+}
+function togglePause() {
+  if (!audio) { if (game.cur && !game.cur.answered) playClip(); return; }
+  const c = game.cur;
+  if (audio.paused) {
+    if (!c.answered && audio.currentTime >= c.stopAt - 0.05) playClip(); else audio.play().catch(() => {});
+  } else audio.pause();
+}
+function bindSeek() {
+  bindVol();
+  const sk = document.getElementById("seek"); if (!sk) return;
+  sk.onpointerdown = () => { seekDrag = true; };
+  sk.onpointerup = sk.onpointercancel = sk.onchange = () => { seekDrag = false; };
+  sk.oninput = () => { if (audio) audio.currentTime = Number(sk.value); };
+}
+function onTick() {
+  if (!audio) return;
+  const c = game.cur, len = c.stopAt, t = audio.currentTime;
+  const free = c.answered || len === Infinity;
+  const dur = isFinite(audio.duration) ? audio.duration : 0;
+  const sk = document.getElementById("seek"), tm = document.getElementById("tm"), pp = document.getElementById("pp");
+  if (sk) {
+    sk.max = free ? (dur || 1) : len;
+    sk.disabled = !free;
+    if (!seekDrag) sk.value = Math.min(t, Number(sk.max));
+  }
+  if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1)} / ${len} s`;
+  if (t >= len && !audio.paused) audio.pause();
+  if (pp) pp.textContent = audio.paused && !(t >= len && !c.answered) ? "Wznów" : audio.paused ? "Odtwórz" : "Pauza";
+}
+const fmt = x => Math.floor(x / 60) + ":" + String(Math.floor(x % 60)).padStart(2, "0");
+
+/* ---------- answering ---------- */
+function answer(guess) {
+  const c = game.cur; if (c.answered) return; c.answered = true;
+  const key = keyOf.get(c.s.anime);
+  const right = guess !== null && aliasList.some(a => a.nn === norm(guess) && a.key === key);
+  const pts = right ? Math.max(0, 3 - c.stage) : 0;
+  game.score += pts;
+  game.streak = right ? game.streak + 1 : 0;
+  game.best = Math.max(game.best, game.streak);
+  game.log.push({ anime: (keyTitles.get(key) || [c.s.anime])[0], ok: right });
+  const st = stats[c.s.anime] || { ok: 0, miss: 0 };
+  right ? st.ok++ : st.miss++;
+  stats[c.s.anime] = st; lsSet("quiz-stats", stats);
+  if (game.mode === "marathon") { mar.i = game.i + 1; mar.n++; if (right) mar.ok++; else mar.wrong.push(c.s.name); lsSet("quiz-marathon", mar); }
+  if (audio) { c.stopAt = Infinity; audio.play().catch(() => {}); }
+  const last = !game.endless && game.i + 1 >= game.queue.length;
+  const kind = c.s.type === "ED" ? "Ending" : "Opening";
+  const num = cfg.showNum && c.s.slug ? ` <span class="chip">${esc(c.s.slug)}</span>` : "";
+  const list = keyTitles.get(key) || [c.s.anime];
+  $app.innerHTML = `
+    ${hdr()}
+    <section class="card">
+      <div class="verdict ${right ? "ok" : "no"}">${right ? `Dobrze, +${pts} pkt` : guess === null ? "Pominięte" : "Źle"}</div>
+      ${!right && guess ? `<p class="muted small">Twoja odpowiedź: ${esc(guess)}</p>` : ""}
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
+      <div class="row spread"><span class="timer" id="tm"></span></div>
+      ${volHtml()}
+      <div class="label">To było</div>
+      <div class="answer">${esc(list[0])}</div>
+      ${list.length > 1 ? `<p class="muted small">${list.slice(1, 4).map(esc).join(" · ")}</p>` : ""}
+      <div><span class="chip">${kind}</span>${num}</div>
+      <div class="row"><button id="pp">Pauza</button><button id="fav" aria-pressed="${favs.has(c.s.name)}">${favs.has(c.s.name) ? "★ W ulubionych" : "☆ Do ulubionych"}</button></div>
+      <button id="next" class="primary big">${last ? "Zobacz wynik" : "Dalej"}</button>
+    </section>`;
+  document.getElementById("pp").onclick = togglePause;
+  bindSeek();
+  const fb = document.getElementById("fav");
+  fb.onclick = () => {
+    if (favs.has(c.s.name)) favs.delete(c.s.name); else favs.add(c.s.name);
+    saveFavs(); const on = favs.has(c.s.name);
+    fb.setAttribute("aria-pressed", on); fb.textContent = on ? "★ W ulubionych" : "☆ Do ulubionych";
+  };
+  const nx = document.getElementById("next");
+  nx.onclick = () => { stopAudio(); if (last) result(); else { game.i++; if (game.endless && game.i >= game.queue.length) game.queue = game.queue.concat(shuffle(game.pool)); round(); } };
+  setTimeout(() => { if (document.body.contains(nx)) nx.focus({ preventScroll: true }); }, 400);
+}
+
+function result() {
+  stopAudio();
+  const mara = game.mode === "marathon";
+  const ok = mara ? mar.ok : game.log.filter(l => l.ok).length;
+  const n = mara ? mar.n : game.log.length;
+  const wrongNames = mara
+    ? mar.wrong.map(nm => { const x = songs.find(y => y.name === nm); return x ? mainTitle(x) : null; }).filter(Boolean)
+    : game.log.filter(l => !l.ok).map(l => l.anime);
+  const wrong = [...new Set(wrongNames)];
+  $app.innerHTML = `
+    <header><div class="label">${mara ? "Wszystkie piosenki" : "Koniec gry"}</div><h1>${ok} z ${n} trafionych</h1></header>
+    <div class="stats">
+      ${mara ? `<div class="stat"><span class="label">Trafione</span><b>${ok}</b></div><div class="stat"><span class="label">Piosenek</span><b>${n}</b></div>`
+             : `<div class="stat"><span class="label">Punkty</span><b>${game.score}</b></div><div class="stat"><span class="label">Najlepsza seria</span><b>${game.best}</b></div>`}
+      <div class="stat"><span class="label">Skuteczność</span><b>${n ? Math.round(ok / n * 100) : 0}%</b></div>
+    </div>
+    <section class="card">
+      <h2>Do powtórki</h2>
+      ${wrong.length ? `<ul class="list">${wrong.map(w => `<li>${esc(w)}</li>`).join("")}</ul>` : `<p class="muted">Bez pomyłek.</p>`}
+    </section>
+    <button id="again2" class="primary big">${mara ? "Zacznij przejście od nowa" : "Zagraj jeszcze raz"}</button>
+    <button id="menu" class="big">Ustawienia</button>`;
+  document.getElementById("again2").onclick = () => mara ? startMarathon(true) : startGame();
+  document.getElementById("menu").onclick = () => home();
+}
+
+/* ---------- favourites ---------- */
+function favScreen() {
+  stopAudio();
+  const list = songs.filter(s => favs.has(s.name)).sort((a, b) => mainTitle(a).localeCompare(mainTitle(b)));
+  $app.innerHTML = `
+    <header class="row spread"><h1>Ulubione</h1><button id="back">Wróć</button></header>
+    <section class="card">
+      ${list.length ? `<ul class="list">${list.map(x => `<li><div style="min-width:0"><b>${esc(mainTitle(x))}</b><div class="muted small">${x.type === "ED" ? "Ending" : "Opening"}${cfg.showNum && x.slug ? " · " + esc(x.slug) : ""}</div></div>
+        <div class="row" style="flex-wrap:nowrap"><button data-play="${esc(x.name)}">Odtwórz</button><button data-rm="${esc(x.name)}" aria-label="Usuń z ulubionych">★</button></div></li>`).join("")}</ul>`
+        : `<p class="muted">Nic tu jeszcze nie ma. Piosenkę dodajesz gwiazdką po odpowiedzi w quizie.</p>`}
+    </section>`;
+  document.getElementById("back").onclick = () => home();
+  let playing = null;
+  const reset = () => document.querySelectorAll("[data-play]").forEach(b => b.textContent = "Odtwórz");
+  document.querySelectorAll("[data-play]").forEach(b => b.onclick = () => {
+    const name = b.dataset.play; stopAudio(); reset();
+    if (playing === name) { playing = null; return; }
+    const x = songs.find(y => y.name === name); if (!x) return;
+    playing = name; audio = new Audio(URL.createObjectURL(x.blob)); applyVol(audio);
+    audio.onended = () => { playing = null; reset(); };
+    audio.play().catch(() => {}); b.textContent = "Stop";
+  });
+  document.querySelectorAll("[data-rm]").forEach(b => b.onclick = () => { favs.delete(b.dataset.rm); saveFavs(); favScreen(); });
+}
+
+/* ---------- player ---------- */
+function plPool() {
+  let pool = songs.filter(x => pl.type === "both" || x.type === pl.type);
+  if (pl.source === "fav") pool = pool.filter(x => favs.has(x.name));
+  return pool;
+}
+function playerScreen() {
+  stopAudio(); $app.classList.add("wide-pl");
+  const nFav = songs.filter(x => favs.has(x.name)).length;
+  const pool = plPool();
+  plq = plOrder(pool); pli = -1;
+  const segp = (name, opts, cur) => `<div class="seg" role="group" aria-label="${name}">` + opts.map(([v, t]) => `<button data-set="${name}" data-v="${v}" aria-pressed="${cur === v}">${t}</button>`).join("") + `</div>`;
+  const VIS = [["bars", "Słupki"], ["wave", "Fala"], ["radial", "Koło"], ["mirror", "Lustro"], ["off", "Wył."]];
+  $app.innerHTML = `
+    <header class="row spread"><h1>Odtwarzacz</h1><button id="back">Wróć</button></header>
+    <div class="pl-grid">
+    <section class="card pl-set">
+      <div><div class="label">Co odtwarzać</div>${segp("plType", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], pl.type)}</div>
+      <div><div class="label">Źródło</div>${segp("plSrc", [["all", "Wszystkie"], ["fav", `Ulubione (${nFav})`]], pl.source)}</div>
+    </section>
+    ${pool.length ? `
+    <section class="card pl-now">
+      <div class="label" id="plcount"></div>
+      <div class="answer" id="pltitle"></div>
+      <div><span class="chip" id="plkind"></span></div>
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
+      <div class="row spread"><span class="timer" id="tm">0:00 / 0:00</span></div>
+      ${volHtml()}
+      <div class="row" style="flex-wrap:nowrap"><button id="plprev" aria-label="Poprzedni">⏮</button><button id="plpp" class="primary" style="flex:1">Pauza</button><button id="plnext" aria-label="Następny">⏭</button></div>
+      <div class="row"><button id="plshuf" aria-pressed="${pl.shuffle}">${pl.shuffle ? "Losowo: wł." : "Losowo: wył. (A–Z)"}</button><button id="fav" aria-pressed="false">☆ Do ulubionych</button></div>
+    </section>
+    <section class="card pl-set">
+      <div class="label">Szukaj piosenki</div>
+      <input id="plq" type="text" placeholder="Wpisz tytuł anime" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Szukaj piosenki">
+      <div id="plres"></div>
+    </section>
+    <section class="card vis-card pl-vis">
+      <canvas id="vis" aria-hidden="true"></canvas>
+      <div class="seg" role="group" aria-label="Styl wizualizacji">${VIS.map(([v, t]) => `<button data-vis="${v}" aria-pressed="${pl.vis === v}">${t}</button>`).join("")}</div>
+      ${pl.vis === "off" ? "" : `<p class="muted small">Jeśli muzyka przestaje grać po zgaszeniu ekranu, wybierz „Wył.”.</p>`}
+    </section>
+    <section class="card pl-next"><div class="label">Następne</div><ul class="list" id="plnextlist"></ul></section>`
+    : `<section class="card"><p class="muted">Brak piosenek przy tych ustawieniach. ${pl.source === "fav" ? "Dodaj ulubione gwiazdką w quizie albo w odtwarzaczu." : ""}</p></section>`}
+    </div>`;
+  document.getElementById("back").onclick = () => { stopAudio(); home(); };
+  document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
+    if (b.dataset.set === "plType") pl.type = b.dataset.v; else pl.source = b.dataset.v;
+    lsSet("quiz-player", pl); playerScreen();
+  });
+  if (!pool.length) return;
+  bindSeek();
+  document.querySelectorAll("[data-vis]").forEach(b => b.onclick = () => {
+    pl.vis = b.dataset.vis; lsSet("quiz-player", pl);
+    document.querySelectorAll("[data-vis]").forEach(x => x.setAttribute("aria-pressed", x.dataset.vis === pl.vis));
+    if (pl.vis !== "off" && audio) { hook(audio); applyVol(audio); }
+  });
+  document.getElementById("plpp").onclick = () => { if (!audio) return; if (audio.paused) audio.play().catch(() => {}); else audio.pause(); };
+  document.getElementById("plnext").onclick = plNext;
+  document.getElementById("plprev").onclick = plPrev;
+  document.getElementById("plshuf").onclick = () => {
+    pl.shuffle = !pl.shuffle; lsSet("quiz-player", pl);
+    const sb = document.getElementById("plshuf");
+    sb.setAttribute("aria-pressed", pl.shuffle); sb.textContent = pl.shuffle ? "Losowo: wł." : "Losowo: wył. (A–Z)";
+    const cur = plq[pli]; if (cur) { plq = plq.slice(0, pli + 1).concat(plRest(cur)); plShowNext(); }
+  };
+  const qi = document.getElementById("plq");
+  qi.oninput = plRenderRes;
+  qi.onkeydown = e => { if (e.key === "Enter") { const r = plSearch(qi.value); if (r.length) plPlaySong(r[0], r); } };
+  document.getElementById("fav").onclick = () => {
+    const x = plq[pli]; if (!x) return;
+    if (favs.has(x.name)) favs.delete(x.name); else favs.add(x.name);
+    saveFavs(); plShowFav();
+  };
+  plPlay(0);
+  plRenderRes();
+  cancelAnimationFrame(visRaf); visLoop();
+}
+const plCmp = (a, b) => mainTitle(a).localeCompare(mainTitle(b)) || a.name.localeCompare(b.name);
+function plOrder(list) { return pl.shuffle ? shuffle(list) : list.slice().sort(plCmp); }
+function plRest(cur, list) {
+  const src = list || plPool(), base = src.filter(y => y.name !== cur.name);
+  if (pl.shuffle) return shuffle(base);
+  const sorted = src.slice().sort(plCmp), k = sorted.findIndex(y => y.name === cur.name);
+  if (k < 0) return sorted;
+  return list ? sorted.slice(k + 1) : sorted.slice(k + 1).concat(sorted.slice(0, k));
+}
+function plPlaySong(x, list) {
+  plq = plq.slice(0, pli + 1).concat([x], plRest(x, list));
+  plPlay(pli + 1);
+}
+function plShowNext() {
+  const ul = document.getElementById("plnextlist"); if (!ul) return;
+  ul.innerHTML = plq.slice(pli + 1, pli + 4).map(y => `<li><span>${esc(mainTitle(y))}</span><span class="muted small">${y.type}</span></li>`).join("") || `<li class="muted">Kolejka zostanie wylosowana od nowa.</li>`;
+}
+function plSearch(q) {
+  const n = norm(q); if (!n) return [];
+  return plPool().filter(x => (keyTitles.get(keyOf.get(x.anime)) || [x.anime]).some(t => norm(t).includes(n))).sort(plCmp).slice(0, 60);
+}
+function plRenderRes() {
+  const box = document.getElementById("plres"), q = document.getElementById("plq").value;
+  if (!box) return;
+  const res = plSearch(q);
+  if (!q.trim()) { box.innerHTML = `<p class="muted small">Szuka w wybranym wyżej źródle (OP/ED, wszystkie albo ulubione).</p>`; return; }
+  if (!res.length) { box.innerHTML = `<p class="muted small">Nic nie znaleziono.</p>`; return; }
+  box.innerHTML = `<div class="row spread"><span class="muted small">Wyniki: ${res.length}</span><button id="plall" class="small">Odtwórz wyniki</button></div>
+    <ul class="list" style="max-height:320px;overflow-y:auto">${res.map(x => `<li><div style="min-width:0"><b>${esc(mainTitle(x))}</b><div class="muted small">${x.type === "ED" ? "Ending" : "Opening"}${cfg.showNum && x.slug ? " · " + esc(x.slug) : ""}</div></div><button data-s="${esc(x.name)}">Odtwórz</button></li>`).join("")}</ul>`;
+  box.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { const x = res.find(y => y.name === b.dataset.s); if (x) plPlaySong(x, res); });
+  document.getElementById("plall").onclick = () => { const o = plOrder(res); plq = plq.slice(0, pli + 1).concat(o); plPlay(pli + 1); };
+}
+function plShowFav() {
+  const x = plq[pli], fb = document.getElementById("fav"); if (!x || !fb) return;
+  const on = favs.has(x.name);
+  fb.setAttribute("aria-pressed", on); fb.textContent = on ? "★ W ulubionych" : "☆ Do ulubionych";
+}
+function plNext() {
+  if (pli + 1 >= plq.length) plq = plq.concat(plOrder(plPool()));
+  plPlay(pli + 1);
+}
+function plPrev() {
+  if (audio && audio.currentTime > 3) { audio.currentTime = 0; return; }
+  plPlay(Math.max(0, pli - 1));
+}
+function plPlay(i) {
+  const x = plq[i]; if (!x || !document.getElementById("pltitle")) return;
+  pli = i;
+  stopAudio();
+  audio = new Audio(URL.createObjectURL(x.blob));
+  audio.onended = plNext;
+  hook(audio); applyVol(audio);
+  audio.play().catch(() => {});
+  clearInterval(plTick); plTick = setInterval(plOnTick, 200);
+  const kind = x.type === "ED" ? "Ending" : "Opening";
+  document.getElementById("pltitle").textContent = mainTitle(x);
+  document.getElementById("plkind").textContent = kind + (cfg.showNum && x.slug ? " · " + x.slug : "");
+  document.getElementById("plcount").textContent = `Teraz gra ${i + 1}`;
+  plShowNext();
+  plShowFav();
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: mainTitle(x), artist: kind, album: "Anime Songs" });
+    navigator.mediaSession.setActionHandler("play", () => { if (audio) audio.play().catch(() => {}); });
+    navigator.mediaSession.setActionHandler("pause", () => { if (audio) audio.pause(); });
+    navigator.mediaSession.setActionHandler("nexttrack", plNext);
+    navigator.mediaSession.setActionHandler("previoustrack", plPrev);
+  } catch (e) {}
+}
+function plOnTick() {
+  if (!audio) return;
+  const sk = document.getElementById("seek"), tm = document.getElementById("tm"), pp = document.getElementById("plpp");
+  if (!sk || !pp) { clearInterval(plTick); return; }
+  const dur = isFinite(audio.duration) ? audio.duration : 0, t = audio.currentTime;
+  sk.max = dur || 1; if (!seekDrag) sk.value = t;
+  tm.textContent = `${fmt(t)} / ${fmt(dur)}`;
+  pp.textContent = audio.paused ? "Odtwórz" : "Pauza";
+}
+
+/* ---------- visualiser ---------- */
+let actx = null, analyser = null, visRaf = 0, visRot = 0;
+const FB = new Uint8Array(256), TB = new Uint8Array(512);
+let vpeaks = [];
+function hook(a) {
+  if (pl.vis === "off" || a._hooked) return;
+  try {
+    if (!actx) {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      actx = new AC(); analyser = actx.createAnalyser();
+      analyser.fftSize = 512; analyser.smoothingTimeConstant = 0.78;
+      gainNode = actx.createGain(); gainNode.gain.value = vol;
+      analyser.connect(gainNode); gainNode.connect(actx.destination);
+    }
+    if (actx.state === "suspended") actx.resume().catch(() => {});
+    const src = actx.createMediaElementSource(a); src.connect(analyser); a._hooked = true;
+  } catch (e) {}
+}
+function visLoop() {
+  const cv = document.getElementById("vis"); if (!cv) return;
+  visRaf = requestAnimationFrame(visLoop);
+  if (pl.vis === "off") { cv.hidden = true; return; }
+  cv.hidden = false;
+  const dpr = window.devicePixelRatio || 1, w = Math.round(cv.clientWidth * dpr), h = Math.round(cv.clientHeight * dpr);
+  if (!w || !h) return;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  if (analyser && audio && audio._hooked) { analyser.getByteFrequencyData(FB); analyser.getByteTimeDomainData(TB); }
+  else { FB.fill(0); TB.fill(128); }
+  const g = cv.getContext("2d"), cs = getComputedStyle(document.documentElement), col = n => cs.getPropertyValue(n).trim();
+  const accent = col("--accent"), good = col("--good"), bad = col("--bad"), dim = col("--surface2"), fg = col("--fg");
+  g.clearRect(0, 0, w, h); g.shadowBlur = 0; g.globalAlpha = 1;
+  const band = (i, n, span) => {
+    const lo = Math.floor(Math.pow(i / n, 1.7) * span) + 1, hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / n, 1.7) * span) + 1);
+    let sum = 0; for (let k = lo; k < hi; k++) sum += FB[k]; return Math.min(1, sum / (hi - lo) / 255 * 1.18);
+  };
+  if (pl.vis === "bars") {
+    const N = 28, rows = 14, gap = 3 * dpr, cw = (w - gap * (N - 1)) / N, rh = (h - gap * (rows - 1)) / rows;
+    for (let i = 0; i < N; i++) {
+      const lit = Math.round(band(i, N, 150) * rows);
+      vpeaks[i] = Math.max(lit, (vpeaks[i] || 0) - 0.15);
+      const x = i * (cw + gap);
+      for (let r = 0; r < rows; r++) {
+        const y = h - (r + 1) * rh - r * gap;
+        g.fillStyle = r < lit ? (r < rows * 0.55 ? good : r < rows * 0.82 ? accent : bad) : dim;
+        g.globalAlpha = r < lit ? 1 : 0.55;
+        g.fillRect(x, y, cw, rh);
+      }
+      const pr = Math.round(vpeaks[i]) - 1;
+      if (pr >= 0) { g.globalAlpha = 0.9; g.fillStyle = fg; g.fillRect(x, h - (pr + 1) * rh - pr * gap, cw, rh); }
+    }
+  } else if (pl.vis === "wave") {
+    g.lineWidth = 3 * dpr; g.lineJoin = "round"; g.strokeStyle = accent; g.shadowColor = accent; g.shadowBlur = 12 * dpr;
+    g.beginPath();
+    for (let i = 0; i < TB.length; i++) {
+      const x = i / (TB.length - 1) * w, y = h / 2 + (TB[i] - 128) / 128 * h * 0.45;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+  } else if (pl.vis === "radial") {
+    const cx = w / 2, cy = h / 2, m = Math.min(w, h), r0 = m * 0.2, N = 72;
+    visRot += 0.004; g.lineCap = "round"; g.lineWidth = Math.max(2, m * 0.016);
+    g.strokeStyle = dim; g.beginPath(); g.arc(cx, cy, r0 - 4 * dpr, 0, Math.PI * 2); g.stroke();
+    g.strokeStyle = accent;
+    for (let i = 0; i < N; i++) {
+      const v = band(i, N, 140), a = i / N * Math.PI * 2 + visRot, len = 3 * dpr + v * m * 0.27;
+      g.beginPath(); g.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); g.lineTo(cx + Math.cos(a) * (r0 + len), cy + Math.sin(a) * (r0 + len)); g.stroke();
+    }
+  } else if (pl.vis === "mirror") {
+    const N = 40, gap = 3 * dpr, cw = (w - gap * (N - 1)) / N, mid = h / 2;
+    g.fillStyle = accent;
+    for (let i = 0; i < N; i++) {
+      const v = band(i, N, 150), bh = Math.max(2 * dpr, v * h * 0.46), x = i * (cw + gap);
+      g.globalAlpha = 1; g.fillRect(x, mid - bh, cw, bh);
+      g.globalAlpha = 0.4; g.fillRect(x, mid, cw, bh * 0.8);
+    }
+  }
+  g.globalAlpha = 1;
+}
+
+/* ---------- boot ---------- */
+(async function () { db = await openDb(); await reload(); home(); })();
+</script>
+
+<script>if ("serviceWorker" in navigator) { window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {})); }</script>
+</body>
+</html>
