@@ -83,8 +83,6 @@ button:disabled { opacity: .45; cursor: default; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .stat { background: var(--surface2); border-radius: 10px; padding: 10px 12px; }
 .stat b { display: block; font-family: var(--mono); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
-.vidbox { background: #000; border-radius: 10px; overflow: hidden; }
-.vidbox video { display: block; width: 100%; max-height: 60vh; }
 textarea { width: 100%; font: 12px/1.4 var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; resize: vertical; }
 .rate-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .rate-grid button { padding: 14px 4px; font-size: 1rem; }
@@ -181,6 +179,7 @@ let ratings = lsGet("quiz-ratings", {});
 const saveRatings = () => lsSet("quiz-ratings", ratings);
 let rate = lsGet("quiz-rate", null), rateMode = false;
 let artists = lsGet("quiz-artists", {});
+let alids = lsGet("quiz-alids", {});
 let allSongs = [];
 const artistOf = x => artists[stemOf(x.name)] || "";
 let vol = Number(lsGet("quiz-vol", 1)); if (!(vol >= 0 && vol <= 1)) vol = 1;
@@ -212,8 +211,11 @@ function buildAliases() {
   aliasList = []; keyOf = new Map(); keyTitles = new Map(); keyCover = new Map(); matchedCount = 0;
   const idx = new Map();
   (titles || []).forEach((e, i) => entryTitles(e).forEach(t => { const n = norm(t); if (n && !idx.has(n)) idx.set(n, i); }));
+  const byId = new Map((titles || []).map((e, i) => [e.id, i]));
   for (const name of animeNames) {
-    const i = idx.get(norm(name));
+    let i = alids[name] != null ? byId.get(Number(alids[name])) : undefined;
+    if (i === undefined) i = idx.get(norm(name));
+    if (i === undefined) i = idx.get(norm(name.replace(/\s*\((tv|\d{4})\)\s*$/i, "")));
     const key = i === undefined ? "f:" + name : "e:" + i;
     if (i !== undefined) matchedCount++;
     keyOf.set(name, key);
@@ -225,18 +227,10 @@ let game = null;
 let audio = null;
 let tick = null;
 
-const memVid = new Map(); let vidNames = new Set();
 const stemOf = n => n.replace(/\.[^.]+$/, "");
-const hasVid = x => vidNames.has(stemOf(x.name));
-const vs = mode => db.transaction("videos", mode).objectStore("videos");
-async function vidKeys() { try { if (db) return await reqP(vs("readonly").getAllKeys()); } catch (e) {} return [...memVid.keys()]; }
-async function vidPut(rec) { if (db) await reqP(vs("readwrite").put(rec)); else memVid.set(rec.name, rec); }
-async function vidGet(name) { if (db) { const r = await reqP(vs("readonly").get(name)); return r && r.blob; } const r = memVid.get(name); return r && r.blob; }
-async function vidClear() { if (db) await reqP(vs("readwrite").clear()); else memVid.clear(); }
 async function reload() {
   allSongs = await dbAll();
   songs = allSongs.filter(s => !removed.has(s.name));
-  vidNames = new Set(await vidKeys());
   animeNames = [...new Set(songs.map(s => s.anime))].sort((a, b) => a.localeCompare(b));
   buildAliases();
 }
@@ -273,15 +267,12 @@ function home(note) {
       <input id="tit" type="file" accept=".json,application/json" hidden>
       <div class="label">Albo pobierz z AniList</div>
       <div class="row" style="flex-wrap:nowrap"><input id="alu" type="text" value="${esc(alUser)}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Nick na AniList"><button id="alget">Pobierz</button></div>
+      ${(() => { const bad = animeNames.filter(n => String(keyOf.get(n)).startsWith("f:")), nc = animeNames.filter(n => !String(keyOf.get(n)).startsWith("f:") && !keyCover.get(keyOf.get(n)));
+        return titles && (bad.length || nc.length) ? `<details class="small"><summary>Bez okładki: ${bad.length + nc.length} anime (kliknij, żeby zobaczyć)</summary><p class="muted small">${bad.length ? "Nie znaleziono w AniList: " + bad.map(esc).join("; ") + ". " : ""}${nc.length ? "Znalezione, ale AniList nie ma okładki: " + nc.map(esc).join("; ") + "." : ""}</p></details>` : ""; })()}
       <div class="label">Wykonawcy (opcjonalnie)</div>
       <p class="muted small">${Object.keys(artists).length ? `Wczytano wykonawców: ${Object.keys(artists).length}.` : "Wczytaj plik wykonawcy.json (skrypt przygotuj_wykonawcow.py na komputerze). Wykonawca pokaże się w odtwarzaczu i po odpowiedzi w quizie."}</p>
       <label class="btn" style="text-align:center;display:block" for="afile">Wczytaj wykonawcy.json</label>
       <input id="afile" type="file" accept=".json,application/json" hidden>` : ""}
-      ${songs.length ? `<div class="label">Filmy (opcjonalnie)</div>
-      <p class="muted small">${vidNames.size ? `Wczytano ${vidNames.size} filmów. W odtwarzaczu możesz wybrać „Film", a w quizie film pojawia się po odpowiedzi.` : "Wczytaj pliki .webm z folderu Filmy (skrypt pobierz_filmy.py). Nazwy muszą pasować do nazw mp3."}</p>
-      <label class="btn" style="text-align:center;display:block" for="vfiles">${vidNames.size ? "Dodaj więcej filmów" : "Wczytaj filmy"}</label>
-      <input id="vfiles" type="file" accept="video/webm,video/mp4,.webm,.mp4" multiple hidden>
-      ${vidNames.size ? `<button id="vclear" class="small">Usuń filmy z aplikacji</button>` : ""}` : ""}
       ${songs.length ? `<button id="clear" class="small">Wyczyść bibliotekę</button>` : ""}
     </section>
     ${songs.length ? `
@@ -323,9 +314,6 @@ function home(note) {
     </section>` : ""}`;
   const f = document.getElementById("files");
   f.onchange = () => importFiles([...f.files]);
-  const vf = document.getElementById("vfiles"); if (vf) vf.onchange = () => importVideos([...vf.files]);
-  const vc = document.getElementById("vclear");
-  if (vc) vc.onclick = () => { vc.textContent = "Na pewno? Dotknij jeszcze raz"; vc.className = "small primary"; vc.onclick = async () => { await vidClear(); await reload(); home("Filmy usunięte z aplikacji."); }; };
   const ag = document.getElementById("alget"); if (ag) ag.onclick = fetchTitles;
   const t = document.getElementById("tit");
   if (t) t.onchange = async () => {
@@ -356,7 +344,9 @@ function home(note) {
   const r3 = document.getElementById("rrestart"); if (r3) arm(r3, () => rateScreen(true));
   const af = document.getElementById("afile");
   if (af) af.onchange = async () => {
-    try { const o = JSON.parse(await af.files[0].text()); if (!o || Array.isArray(o) || typeof o !== "object") throw 0; artists = o; lsSet("quiz-artists", o);
+    try { const o = JSON.parse(await af.files[0].text()); if (!o || Array.isArray(o) || typeof o !== "object") throw 0; const meta = o.__anilist__; delete o.__anilist__;
+      artists = o; lsSet("quiz-artists", o);
+      if (meta && typeof meta === "object") { alids = meta; lsSet("quiz-alids", meta); buildAliases(); }
       const hit = songs.filter(x => artistOf(x)).length; home(`Wczytano wykonawców: ${Object.keys(o).length}, pasują do ${hit} piosenek.`); }
     catch (e) { home("Nie udało się odczytać pliku wykonawcy.json."); }
   };
@@ -380,22 +370,6 @@ async function importFiles(files) {
   }
   try { await reload(); } catch (e) { err += " Błąd odczytu biblioteki: " + ((e && e.message) || e); }
   home(`Dodano ${n} z ${todo.length} nowych mp3. Już były: ${mp3.length - todo.length}. Inne pliki pominięte: ${other}${other && files[0] ? ` (np. „${files.find(f => !/\.mp3$/i.test(f.name)).name}”)` : ""}.${err}` + (db ? "" : " Uwaga: zapis trwały niedostępny, biblioteka znika po zamknięciu strony."));
-}
-async function importVideos(files) {
-  const say = t => { const o = document.getElementById("imp"); if (o) o.textContent = t; };
-  const stems = new Set(songs.map(x => stemOf(x.name)));
-  const vids = files.filter(f => /\.(webm|mp4)$/i.test(f.name));
-  let n = 0, unm = 0, err = "";
-  say(`Wybrano ${files.length} plików, wczytuję filmy…`);
-  for (const f of vids) {
-    const st = stemOf(f.name);
-    if (!stems.has(st)) { unm++; continue; }
-    try { await vidPut({ name: st, blob: f }); n++; }
-    catch (e) { err = ` Zapis się nie udał przy „${f.name}” (${(e && (e.name || e.message)) || e}). Prawdopodobnie brak miejsca.`; break; }
-    say(`Wczytuję filmy ${n}/${vids.length}…`);
-  }
-  try { await reload(); } catch (e) {}
-  home(`Dodano ${n} filmów. Bez pary w bibliotece mp3: ${unm}. Inne pliki pominięte: ${files.length - vids.length}.${err}`);
 }
 window.addEventListener("unhandledrejection", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + ((e.reason && e.reason.message) || e.reason); });
 window.addEventListener("error", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + e.message; });
@@ -575,7 +549,6 @@ function answer(guess) {
     <section class="card">
       <div class="verdict ${right ? "ok" : "no"}">${right ? `Dobrze, +${pts} pkt` : guess === null ? "Pominięte" : "Źle"}</div>
       ${!right && guess ? `<p class="muted small">Twoja odpowiedź: ${esc(guess)}</p>` : ""}
-      <div id="revvid" class="vidbox" hidden></div>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
       <div class="row spread"><span class="timer" id="tm"></span></div>
       ${volHtml()}
@@ -590,7 +563,6 @@ function answer(guess) {
       <button id="next" class="primary big">${last ? "Zobacz wynik" : "Dalej"}</button>
     </section>`;
   setSession(list[0], kind, cover);
-  swapToVideo(c);
   document.getElementById("pp").onclick = togglePause;
   bindSeek();
   const fb = document.getElementById("fav");
@@ -604,19 +576,6 @@ function answer(guess) {
   setTimeout(() => { if (document.body.contains(nx)) nx.focus({ preventScroll: true }); }, 400);
 }
 
-async function swapToVideo(c) {
-  if (!hasVid(c.s)) return;
-  let blob; try { blob = await vidGet(stemOf(c.s.name)); } catch (e) {}
-  const box = document.getElementById("revvid");
-  if (!blob || !box || !game || game.cur !== c || !audio) return;
-  const old = audio, pos = old.currentTime, wasPaused = old.paused;
-  const v = document.createElement("video"); v.playsInline = true; v.src = URL.createObjectURL(blob); applyVol(v);
-  v.onclick = () => { if (v.paused) v.play().catch(() => {}); else v.pause(); };
-  box.appendChild(v); box.hidden = false;
-  v.addEventListener("loadedmetadata", () => { try { v.currentTime = Math.min(pos, v.duration || pos); } catch (e) {} if (!wasPaused) v.play().catch(() => {}); }, { once: true });
-  try { old.pause(); } catch (e) {} const u = old.src; old.removeAttribute("src"); if (u) URL.revokeObjectURL(u);
-  audio = v;
-}
 function result() {
   stopAudio();
   const mara = game.mode === "marathon";
@@ -672,7 +631,6 @@ function favScreen() {
 function plPool() {
   let pool = songs.filter(x => pl.type === "both" || x.type === pl.type);
   if (pl.source === "fav") pool = pool.filter(x => favs.has(x.name));
-  if (pl.film && vidNames.size) pool = pool.filter(hasVid);
   return pool;
 }
 function playerScreen() {
@@ -687,13 +645,11 @@ function playerScreen() {
     <div class="pl-grid">
     <section class="card pl-set">
       <div><div class="label">Co odtwarzać</div>${segp("plType", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], pl.type)}</div>
-      ${vidNames.size ? `<div><div class="label">Obraz</div>${segp("plFilm", [["0", "Tylko dźwięk"], ["1", "Film"]], pl.film ? "1" : "0")}</div>` : ""}
       <div><div class="label">Źródło</div>${segp("plSrc", [["all", "Wszystkie"], ["fav", `Ulubione (${nFav})`]], pl.source)}</div>
     </section>
     ${pool.length ? `
     <section class="card pl-now">
       <div class="label" id="plcount"></div>
-      <div id="plvid" class="vidbox" hidden></div>
       <div class="reveal-row"><img id="plcover" class="cover" alt="" referrerpolicy="no-referrer" hidden><div style="min-width:0"><div class="answer" id="pltitle"></div><p class="muted small" id="plalt"></p><p class="small" id="plartist"></p></div></div>
       <div><span class="chip" id="plkind"></span></div>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
@@ -718,7 +674,7 @@ function playerScreen() {
     </div>`;
   document.getElementById("back").onclick = () => { stopAudio(); home(); };
   document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
-    if (b.dataset.set === "plType") pl.type = b.dataset.v; else if (b.dataset.set === "plFilm") pl.film = b.dataset.v === "1"; else pl.source = b.dataset.v;
+    if (b.dataset.set === "plType") pl.type = b.dataset.v; else pl.source = b.dataset.v;
     lsSet("quiz-player", pl); playerScreen();
   });
   if (!pool.length) return;
@@ -801,18 +757,11 @@ async function plPlay(i) {
   const x = plq[i]; if (!x || !document.getElementById("pltitle")) return;
   const tok = ++plTok; pli = i; stopAudio();
   const key = keyOf.get(x.anime), list = keyTitles.get(key) || [x.anime], cover = keyCover.get(key) || "";
-  let blob = x.blob, vid = false;
-  if (pl.film && hasVid(x)) { try { const vb = await vidGet(stemOf(x.name)); if (vb) { blob = vb; vid = true; } } catch (e) {} }
   if (tok !== plTok || !document.getElementById("pltitle")) return;
-  const box = document.getElementById("plvid"), img = document.getElementById("plcover");
-  box.innerHTML = "";
-  if (vid) {
-    const el = document.createElement("video"); el.playsInline = true; el.preload = "auto"; el.src = URL.createObjectURL(blob);
-    el.onclick = () => { if (el.paused) el.play().catch(() => {}); else el.pause(); };
-    box.appendChild(el); box.hidden = false; audio = el;
-  } else { box.hidden = true; audio = new Audio(URL.createObjectURL(blob)); }
+  const img = document.getElementById("plcover");
+  audio = new Audio(URL.createObjectURL(x.blob));
   img.onerror = () => { img.hidden = true; };
-  img.hidden = !cover || vid; if (cover && !vid) img.src = cover;
+  img.hidden = !cover; if (cover) img.src = cover;
   audio.onended = rateMode ? null : plNext;
   hook(audio); applyVol(audio);
   audio.play().catch(() => {});
@@ -1118,7 +1067,6 @@ function rateScreen(fresh) {
     <section class="card">
       <div class="label" id="plcount"></div>
       <div class="bar" aria-hidden="true"><i id="rbar" style="width:${Math.round(rate.i / plq.length * 100)}%"></i></div>
-      <div id="plvid" class="vidbox" hidden></div>
       <div class="reveal-row"><img id="plcover" class="cover" alt="" referrerpolicy="no-referrer" hidden><div style="min-width:0"><div class="answer" id="pltitle"></div><p class="muted small" id="plalt"></p><p class="small" id="plartist"></p></div></div>
       <div><span class="chip" id="plkind"></span></div>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
