@@ -83,6 +83,11 @@ button:disabled { opacity: .45; cursor: default; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .stat { background: var(--surface2); border-radius: 10px; padding: 10px 12px; }
 .stat b { display: block; font-family: var(--mono); font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.vidbox { background: #000; border-radius: 10px; overflow: hidden; }
+.vidbox video { display: block; width: 100%; max-height: 60vh; }
+textarea { width: 100%; font: 12px/1.4 var(--mono); color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; resize: vertical; }
+.rate-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.rate-grid button { padding: 14px 4px; font-size: 1rem; }
 .reveal-row { display: flex; gap: 14px; align-items: flex-start; }
 .cover { width: 96px; max-width: 32%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); flex: none; }
 input[type="number"], select { font: inherit; font-size: 16px; color: var(--fg); background: var(--surface2); border: 1px solid var(--line); border-radius: 10px; min-height: 40px; padding: 0 8px; }
@@ -132,8 +137,12 @@ let db = null;
 function openDb() {
   return new Promise(res => {
     try {
-      const rq = indexedDB.open("quiz-anime", 1);
-      rq.onupgradeneeded = () => rq.result.createObjectStore("songs", { keyPath: "name" });
+      const rq = indexedDB.open("quiz-anime", 2);
+      rq.onupgradeneeded = () => {
+        const d = rq.result;
+        if (!d.objectStoreNames.contains("songs")) d.createObjectStore("songs", { keyPath: "name" });
+        if (!d.objectStoreNames.contains("videos")) d.createObjectStore("videos", { keyPath: "name" });
+      };
       rq.onsuccess = () => res(rq.result);
       rq.onerror = () => res(null);
     } catch (e) { res(null); }
@@ -166,6 +175,14 @@ let animeNames = [];
 let stats = lsGet("quiz-stats", {});
 let cfg = Object.assign({ mode: "quick", type: "both", rounds: 10, source: "all", showNum: false }, lsGet("quiz-cfg", {}));
 let favs = new Set(lsGet("quiz-favs", []));
+let removed = new Set(lsGet("quiz-removed", []));
+const saveRemoved = () => lsSet("quiz-removed", [...removed]);
+let ratings = lsGet("quiz-ratings", {});
+const saveRatings = () => lsSet("quiz-ratings", ratings);
+let rate = lsGet("quiz-rate", null), rateMode = false;
+let artists = lsGet("quiz-artists", {});
+let allSongs = [];
+const artistOf = x => artists[stemOf(x.name)] || "";
 let vol = Number(lsGet("quiz-vol", 1)); if (!(vol >= 0 && vol <= 1)) vol = 1;
 let gainNode = null;
 function applyVol(a) {
@@ -187,7 +204,7 @@ let alUser = lsGet("quiz-aluser", "xagrest");
 function entryTitles(e) {
   const out = [], seen = new Set();
   const add = (t, min) => { t = (t || "").trim(); const n = norm(t); if (!t || n.length < min || seen.has(n)) return; seen.add(n); out.push(t); };
-  add(e.english, 1); add(e.romaji, 1); add(e.native, 1);
+  add(e.romaji, 1); add(e.english, 1); add(e.native, 1);
   (e.synonyms || []).forEach(t => add(t, 3));
   return out;
 }
@@ -208,8 +225,18 @@ let game = null;
 let audio = null;
 let tick = null;
 
+const memVid = new Map(); let vidNames = new Set();
+const stemOf = n => n.replace(/\.[^.]+$/, "");
+const hasVid = x => vidNames.has(stemOf(x.name));
+const vs = mode => db.transaction("videos", mode).objectStore("videos");
+async function vidKeys() { try { if (db) return await reqP(vs("readonly").getAllKeys()); } catch (e) {} return [...memVid.keys()]; }
+async function vidPut(rec) { if (db) await reqP(vs("readwrite").put(rec)); else memVid.set(rec.name, rec); }
+async function vidGet(name) { if (db) { const r = await reqP(vs("readonly").get(name)); return r && r.blob; } const r = memVid.get(name); return r && r.blob; }
+async function vidClear() { if (db) await reqP(vs("readwrite").clear()); else memVid.clear(); }
 async function reload() {
-  songs = await dbAll();
+  allSongs = await dbAll();
+  songs = allSongs.filter(s => !removed.has(s.name));
+  vidNames = new Set(await vidKeys());
   animeNames = [...new Set(songs.map(s => s.anime))].sort((a, b) => a.localeCompare(b));
   buildAliases();
 }
@@ -222,11 +249,12 @@ function missedAnime() { return new Set(Object.entries(stats).filter(([, s]) => 
 
 /* ---------- screens ---------- */
 function home(note) {
-  stopAudio(); $app.classList.remove("wide-pl");
+  stopAudio(); rateMode = false; $app.classList.remove("wide-pl");
   const nOP = songs.filter(s => s.type === "OP").length, nED = songs.length - nOP;
   const miss = missedAnime().size;
   const nFav = songs.filter(s => favs.has(s.name)).length;
   const marDone = mar && mar.i >= mar.order.length;
+  const rc = ratingCounts(), ratePending = rate && rate.i < rate.order.length;
   const marPct = mar ? Math.round(mar.i / Math.max(1, mar.order.length) * 100) : 0;
   $app.innerHTML = `
     <header class="row spread" style="align-items:flex-end">
@@ -244,7 +272,16 @@ function home(note) {
       <label class="btn" style="text-align:center;display:block" for="tit">${titles ? "Wczytaj tytuly.json ponownie" : "Wczytaj tytuly.json"}</label>
       <input id="tit" type="file" accept=".json,application/json" hidden>
       <div class="label">Albo pobierz z AniList</div>
-      <div class="row" style="flex-wrap:nowrap"><input id="alu" type="text" value="${esc(alUser)}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Nick na AniList"><button id="alget">Pobierz</button></div>` : ""}
+      <div class="row" style="flex-wrap:nowrap"><input id="alu" type="text" value="${esc(alUser)}" autocapitalize="off" autocomplete="off" spellcheck="false" aria-label="Nick na AniList"><button id="alget">Pobierz</button></div>
+      <div class="label">Wykonawcy (opcjonalnie)</div>
+      <p class="muted small">${Object.keys(artists).length ? `Wczytano wykonawców: ${Object.keys(artists).length}.` : "Wczytaj plik wykonawcy.json (skrypt przygotuj_wykonawcow.py na komputerze). Wykonawca pokaże się w odtwarzaczu i po odpowiedzi w quizie."}</p>
+      <label class="btn" style="text-align:center;display:block" for="afile">Wczytaj wykonawcy.json</label>
+      <input id="afile" type="file" accept=".json,application/json" hidden>` : ""}
+      ${songs.length ? `<div class="label">Filmy (opcjonalnie)</div>
+      <p class="muted small">${vidNames.size ? `Wczytano ${vidNames.size} filmów. W odtwarzaczu możesz wybrać „Film", a w quizie film pojawia się po odpowiedzi.` : "Wczytaj pliki .webm z folderu Filmy (skrypt pobierz_filmy.py). Nazwy muszą pasować do nazw mp3."}</p>
+      <label class="btn" style="text-align:center;display:block" for="vfiles">${vidNames.size ? "Dodaj więcej filmów" : "Wczytaj filmy"}</label>
+      <input id="vfiles" type="file" accept="video/webm,video/mp4,.webm,.mp4" multiple hidden>
+      ${vidNames.size ? `<button id="vclear" class="small">Usuń filmy z aplikacji</button>` : ""}` : ""}
       ${songs.length ? `<button id="clear" class="small">Wyczyść bibliotekę</button>` : ""}
     </section>
     ${songs.length ? `
@@ -252,6 +289,15 @@ function home(note) {
       <h2>Odtwarzacz</h2>
       <p class="muted small">Zwykłe słuchanie w losowej kolejności: OP, ED albo oba, z ulubionymi i przewijaniem.</p>
       <button id="player" class="primary big">Otwórz odtwarzacz</button>
+    </section>
+    <section class="card">
+      <h2>Oceniarka</h2>
+      <p class="muted small">Przesłuchaj piosenki po kolei, każdą raz, i oceń: Meh, Mid, Good albo Peak. Postęp się zapisuje.</p>
+      <p class="small">Peak ${rc.peak} · Good ${rc.good} · Mid ${rc.mid} · Meh ${rc.meh}</p>
+      ${ratePending ? `<div class="bar"><i style="width:${Math.round(rate.i / Math.max(1, rate.order.length) * 100)}%"></i></div><p class="small">${rate.i} z ${rate.order.length} w tej serii</p>
+        <button id="rcont" class="primary big">Kontynuuj ocenianie</button><button id="rrestart">Zacznij nową serię</button>`
+      : `<div><div class="label">Co przesłuchać</div>${seg("type", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], cfg.type)}</div>
+        <button id="rstart" class="primary big">Zacznij ocenianie</button>`}
     </section>
     <section class="card">
       <h2>Tryb gry</h2>
@@ -273,9 +319,13 @@ function home(note) {
       <p class="muted small">Gwiazdkę dodajesz po odpowiedzi w quizie. Z listy możesz odsłuchać całe piosenki.</p>
       <button id="favs">Otwórz listę ulubionych</button>
       <button id="rankbtn">Ranking: tiery S–C i Top 100</button>
+      <button id="databtn">Kopia danych: eksport i import</button>
     </section>` : ""}`;
   const f = document.getElementById("files");
   f.onchange = () => importFiles([...f.files]);
+  const vf = document.getElementById("vfiles"); if (vf) vf.onchange = () => importVideos([...vf.files]);
+  const vc = document.getElementById("vclear");
+  if (vc) vc.onclick = () => { vc.textContent = "Na pewno? Dotknij jeszcze raz"; vc.className = "small primary"; vc.onclick = async () => { await vidClear(); await reload(); home("Filmy usunięte z aplikacji."); }; };
   const ag = document.getElementById("alget"); if (ag) ag.onclick = fetchTitles;
   const t = document.getElementById("tit");
   if (t) t.onchange = async () => {
@@ -300,6 +350,16 @@ function home(note) {
   twoTap("restart", "Na pewno? Dotknij jeszcze raz", () => startMarathon(true));
   const fv = document.getElementById("favs"); if (fv) fv.onclick = favScreen;
   const rb = document.getElementById("rankbtn"); if (rb) rb.onclick = rankScreen;
+  const db1 = document.getElementById("databtn"); if (db1) db1.onclick = () => dataScreen();
+  const r1 = document.getElementById("rstart"); if (r1) r1.onclick = () => rateScreen(true);
+  const r2 = document.getElementById("rcont"); if (r2) r2.onclick = () => rateScreen(false);
+  const r3 = document.getElementById("rrestart"); if (r3) arm(r3, () => rateScreen(true));
+  const af = document.getElementById("afile");
+  if (af) af.onchange = async () => {
+    try { const o = JSON.parse(await af.files[0].text()); if (!o || Array.isArray(o) || typeof o !== "object") throw 0; artists = o; lsSet("quiz-artists", o);
+      const hit = songs.filter(x => artistOf(x)).length; home(`Wczytano wykonawców: ${Object.keys(o).length}, pasują do ${hit} piosenek.`); }
+    catch (e) { home("Nie udało się odczytać pliku wykonawcy.json."); }
+  };
   const pb = document.getElementById("player"); if (pb) pb.onclick = playerScreen;
 }
 
@@ -307,7 +367,7 @@ async function importFiles(files) {
   const say = t => { const o = document.getElementById("imp"); if (o) o.textContent = t; };
   say(`Wybrano ${files.length} plików, sprawdzam…`);
   if (!files.length) { say("Przeglądarka nie przekazała żadnych plików. Spróbuj wybrać mniej plików naraz."); return; }
-  const have = new Set(songs.map(s => s.name));
+  const have = new Set(allSongs.map(s => s.name));
   const mp3 = files.filter(f => /\.mp3$/i.test(f.name));
   const todo = mp3.filter(f => !have.has(f.name));
   const other = files.length - mp3.length;
@@ -320,6 +380,22 @@ async function importFiles(files) {
   }
   try { await reload(); } catch (e) { err += " Błąd odczytu biblioteki: " + ((e && e.message) || e); }
   home(`Dodano ${n} z ${todo.length} nowych mp3. Już były: ${mp3.length - todo.length}. Inne pliki pominięte: ${other}${other && files[0] ? ` (np. „${files.find(f => !/\.mp3$/i.test(f.name)).name}”)` : ""}.${err}` + (db ? "" : " Uwaga: zapis trwały niedostępny, biblioteka znika po zamknięciu strony."));
+}
+async function importVideos(files) {
+  const say = t => { const o = document.getElementById("imp"); if (o) o.textContent = t; };
+  const stems = new Set(songs.map(x => stemOf(x.name)));
+  const vids = files.filter(f => /\.(webm|mp4)$/i.test(f.name));
+  let n = 0, unm = 0, err = "";
+  say(`Wybrano ${files.length} plików, wczytuję filmy…`);
+  for (const f of vids) {
+    const st = stemOf(f.name);
+    if (!stems.has(st)) { unm++; continue; }
+    try { await vidPut({ name: st, blob: f }); n++; }
+    catch (e) { err = ` Zapis się nie udał przy „${f.name}” (${(e && (e.name || e.message)) || e}). Prawdopodobnie brak miejsca.`; break; }
+    say(`Wczytuję filmy ${n}/${vids.length}…`);
+  }
+  try { await reload(); } catch (e) {}
+  home(`Dodano ${n} filmów. Bez pary w bibliotece mp3: ${unm}. Inne pliki pominięte: ${files.length - vids.length}.${err}`);
 }
 window.addEventListener("unhandledrejection", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + ((e.reason && e.reason.message) || e.reason); });
 window.addEventListener("error", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + e.message; });
@@ -369,7 +445,7 @@ function round() {
       <div class="row spread"><span class="timer" id="tm">0.0 / 0,5 s</span><span class="muted small">Z którego anime jest ten utwór?</span></div>
       <div class="row">
         <button id="pp">Pauza</button>
-        <button id="again">Powtórz</button>
+        <button id="again">Odtwórz</button>
         <button id="more"></button>
       </div>
       ${volHtml()}
@@ -390,7 +466,7 @@ function round() {
   bindSeek();
   document.getElementById("again").onclick = playClip;
   document.getElementById("pp").onclick = togglePause;
-  document.getElementById("more").onclick = () => { if (game.cur.stage < STAGES.length - 1) { game.cur.stage++; updateMore(); playClip(); } };
+  document.getElementById("more").onclick = () => { if (game.cur.stage < STAGES.length - 1) { game.cur.stage++; updateMore(); const t = document.getElementById("tm"); if (t && (!audio || audio.paused)) t.textContent = `0,0 / ${fs(STAGES[game.cur.stage])} s`; } };
   document.getElementById("idk").onclick = () => answer(null);
   document.getElementById("quit").onclick = () => { stopAudio(); if (game.mode === "marathon" || !game.log.length) home(); else result(); };
   setSession("Zgadnij anime", "Quiz", "");
@@ -429,7 +505,7 @@ function suggest(v) {
 /* ---------- audio ---------- */
 function stopAudio() {
   clearInterval(tick); tick = null; clearInterval(plTick); plTick = null;
-  if (audio) { try { audio.pause(); } catch (e) {} const u = audio.src; audio.removeAttribute("src"); try { audio.load(); } catch (e) {} if (u) URL.revokeObjectURL(u); audio = null; }
+  if (audio) { try { audio.pause(); } catch (e) {} const u = audio.src; audio.removeAttribute("src"); try { audio.load(); } catch (e) {} if (u) URL.revokeObjectURL(u); try { audio.remove(); } catch (e) {} audio = null; }
 }
 function playClip() {
   const c = game.cur;
@@ -467,7 +543,7 @@ function onTick() {
     sk.disabled = !free;
     if (!seekDrag) sk.value = Math.min(t, Number(sk.max));
   }
-  if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1).replace(".", ",")} / ${fs(len)} s`;
+  if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1).replace(".", ",")} / ${fs(audio.paused ? STAGES[c.stage] : len)} s`;
   if (t >= len && !audio.paused) audio.pause();
   if (pp) pp.textContent = audio.paused && !(t >= len && !c.answered) ? "Wznów" : audio.paused ? "Odtwórz" : "Pauza";
 }
@@ -493,11 +569,13 @@ function answer(guess) {
   const num = cfg.showNum && c.s.slug ? ` <span class="chip">${esc(c.s.slug)}</span>` : "";
   const list = keyTitles.get(key) || [c.s.anime];
   const cover = keyCover.get(key) || "";
+  const artist = artistOf(c.s);
   $app.innerHTML = `
     ${hdr()}
     <section class="card">
       <div class="verdict ${right ? "ok" : "no"}">${right ? `Dobrze, +${pts} pkt` : guess === null ? "Pominięte" : "Źle"}</div>
       ${!right && guess ? `<p class="muted small">Twoja odpowiedź: ${esc(guess)}</p>` : ""}
+      <div id="revvid" class="vidbox" hidden></div>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
       <div class="row spread"><span class="timer" id="tm"></span></div>
       ${volHtml()}
@@ -505,13 +583,14 @@ function answer(guess) {
       <div class="reveal-row">
         ${cover ? `<img class="cover" src="${esc(cover)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
         <div style="min-width:0"><div class="answer">${esc(list[0])}</div>
-        ${list.length > 1 ? `<p class="muted small">${list.slice(1, 4).map(esc).join(" · ")}</p>` : ""}</div>
+        ${list.length > 1 ? `<p class="muted small">${list.slice(1, 4).map(esc).join(" · ")}</p>` : ""}${artist ? `<p class="small">Wykonawca: ${esc(artist)}</p>` : ""}</div>
       </div>
       <div><span class="chip">${kind}</span>${num}</div>
       <div class="row"><button id="pp">Pauza</button><button id="fav" aria-pressed="${favs.has(c.s.name)}">${favs.has(c.s.name) ? "★ W ulubionych" : "☆ Do ulubionych"}</button></div>
       <button id="next" class="primary big">${last ? "Zobacz wynik" : "Dalej"}</button>
     </section>`;
   setSession(list[0], kind, cover);
+  swapToVideo(c);
   document.getElementById("pp").onclick = togglePause;
   bindSeek();
   const fb = document.getElementById("fav");
@@ -525,6 +604,19 @@ function answer(guess) {
   setTimeout(() => { if (document.body.contains(nx)) nx.focus({ preventScroll: true }); }, 400);
 }
 
+async function swapToVideo(c) {
+  if (!hasVid(c.s)) return;
+  let blob; try { blob = await vidGet(stemOf(c.s.name)); } catch (e) {}
+  const box = document.getElementById("revvid");
+  if (!blob || !box || !game || game.cur !== c || !audio) return;
+  const old = audio, pos = old.currentTime, wasPaused = old.paused;
+  const v = document.createElement("video"); v.playsInline = true; v.src = URL.createObjectURL(blob); applyVol(v);
+  v.onclick = () => { if (v.paused) v.play().catch(() => {}); else v.pause(); };
+  box.appendChild(v); box.hidden = false;
+  v.addEventListener("loadedmetadata", () => { try { v.currentTime = Math.min(pos, v.duration || pos); } catch (e) {} if (!wasPaused) v.play().catch(() => {}); }, { once: true });
+  try { old.pause(); } catch (e) {} const u = old.src; old.removeAttribute("src"); if (u) URL.revokeObjectURL(u);
+  audio = v;
+}
 function result() {
   stopAudio();
   const mara = game.mode === "marathon";
@@ -580,10 +672,11 @@ function favScreen() {
 function plPool() {
   let pool = songs.filter(x => pl.type === "both" || x.type === pl.type);
   if (pl.source === "fav") pool = pool.filter(x => favs.has(x.name));
+  if (pl.film && vidNames.size) pool = pool.filter(hasVid);
   return pool;
 }
 function playerScreen() {
-  stopAudio(); $app.classList.add("wide-pl");
+  stopAudio(); rateMode = false; $app.classList.add("wide-pl");
   const nFav = songs.filter(x => favs.has(x.name)).length;
   const pool = plPool();
   plq = plOrder(pool); pli = -1;
@@ -594,18 +687,21 @@ function playerScreen() {
     <div class="pl-grid">
     <section class="card pl-set">
       <div><div class="label">Co odtwarzać</div>${segp("plType", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], pl.type)}</div>
+      ${vidNames.size ? `<div><div class="label">Obraz</div>${segp("plFilm", [["0", "Tylko dźwięk"], ["1", "Film"]], pl.film ? "1" : "0")}</div>` : ""}
       <div><div class="label">Źródło</div>${segp("plSrc", [["all", "Wszystkie"], ["fav", `Ulubione (${nFav})`]], pl.source)}</div>
     </section>
     ${pool.length ? `
     <section class="card pl-now">
       <div class="label" id="plcount"></div>
-      <div class="answer" id="pltitle"></div>
+      <div id="plvid" class="vidbox" hidden></div>
+      <div class="reveal-row"><img id="plcover" class="cover" alt="" referrerpolicy="no-referrer" hidden><div style="min-width:0"><div class="answer" id="pltitle"></div><p class="muted small" id="plalt"></p><p class="small" id="plartist"></p></div></div>
       <div><span class="chip" id="plkind"></span></div>
       <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
       <div class="row spread"><span class="timer" id="tm">0:00 / 0:00</span></div>
       ${volHtml()}
       <div class="row" style="flex-wrap:nowrap"><button id="plprev" aria-label="Poprzedni">⏮</button><button id="plpp" class="primary" style="flex:1">Pauza</button><button id="plnext" aria-label="Następny">⏭</button></div>
       <div class="row"><button id="plshuf" aria-pressed="${pl.shuffle}">${pl.shuffle ? "Losowo: wł." : "Losowo: wył. (A–Z)"}</button><button id="fav" aria-pressed="false">☆ Do ulubionych</button></div>
+      <button id="plrm" class="small">Usuń tę piosenkę na stałe</button>
     </section>
     <section class="card pl-set">
       <div class="label">Szukaj piosenki</div>
@@ -622,7 +718,7 @@ function playerScreen() {
     </div>`;
   document.getElementById("back").onclick = () => { stopAudio(); home(); };
   document.querySelectorAll("[data-set]").forEach(b => b.onclick = () => {
-    if (b.dataset.set === "plType") pl.type = b.dataset.v; else pl.source = b.dataset.v;
+    if (b.dataset.set === "plType") pl.type = b.dataset.v; else if (b.dataset.set === "plFilm") pl.film = b.dataset.v === "1"; else pl.source = b.dataset.v;
     lsSet("quiz-player", pl); playerScreen();
   });
   if (!pool.length) return;
@@ -641,14 +737,16 @@ function playerScreen() {
     sb.setAttribute("aria-pressed", pl.shuffle); sb.textContent = pl.shuffle ? "Losowo: wł." : "Losowo: wył. (A–Z)";
     const cur = plq[pli]; if (cur) { plq = plq.slice(0, pli + 1).concat(plRest(cur)); plShowNext(); }
   };
+  arm(document.getElementById("plrm"), () => {
+    const x = plq[pli]; if (!x) return;
+    removeSong(x); plq.splice(pli, 1); pli--;
+    if (!plPool().length) { stopAudio(); playerScreen(); return; }
+    plNext();
+  });
   const qi = document.getElementById("plq");
   qi.oninput = plRenderRes;
   qi.onkeydown = e => { if (e.key === "Enter") { const r = plSearch(qi.value); if (r.length) plPlaySong(r[0], r); } };
-  document.getElementById("fav").onclick = () => {
-    const x = plq[pli]; if (!x) return;
-    if (favs.has(x.name)) favs.delete(x.name); else favs.add(x.name);
-    saveFavs(); plShowFav();
-  };
+  document.getElementById("fav").onclick = favToggleCurrent;
   plPlay(0);
   plRenderRes();
   cancelAnimationFrame(visRaf); visLoop();
@@ -698,23 +796,38 @@ function plPrev() {
   if (audio && audio.currentTime > 3) { audio.currentTime = 0; return; }
   plPlay(Math.max(0, pli - 1));
 }
-function plPlay(i) {
+let plTok = 0;
+async function plPlay(i) {
   const x = plq[i]; if (!x || !document.getElementById("pltitle")) return;
-  pli = i;
-  stopAudio();
-  audio = new Audio(URL.createObjectURL(x.blob));
-  audio.onended = plNext;
+  const tok = ++plTok; pli = i; stopAudio();
+  const key = keyOf.get(x.anime), list = keyTitles.get(key) || [x.anime], cover = keyCover.get(key) || "";
+  let blob = x.blob, vid = false;
+  if (pl.film && hasVid(x)) { try { const vb = await vidGet(stemOf(x.name)); if (vb) { blob = vb; vid = true; } } catch (e) {} }
+  if (tok !== plTok || !document.getElementById("pltitle")) return;
+  const box = document.getElementById("plvid"), img = document.getElementById("plcover");
+  box.innerHTML = "";
+  if (vid) {
+    const el = document.createElement("video"); el.playsInline = true; el.preload = "auto"; el.src = URL.createObjectURL(blob);
+    el.onclick = () => { if (el.paused) el.play().catch(() => {}); else el.pause(); };
+    box.appendChild(el); box.hidden = false; audio = el;
+  } else { box.hidden = true; audio = new Audio(URL.createObjectURL(blob)); }
+  img.onerror = () => { img.hidden = true; };
+  img.hidden = !cover || vid; if (cover && !vid) img.src = cover;
+  audio.onended = rateMode ? null : plNext;
   hook(audio); applyVol(audio);
   audio.play().catch(() => {});
   clearInterval(plTick); plTick = setInterval(plOnTick, 200);
   const kind = x.type === "ED" ? "Ending" : "Opening";
-  document.getElementById("pltitle").textContent = mainTitle(x);
+  document.getElementById("pltitle").textContent = list[0];
+  document.getElementById("plalt").textContent = list.slice(1, 3).join(" · ");
   document.getElementById("plkind").textContent = kind + (cfg.showNum && x.slug ? " · " + x.slug : "");
-  document.getElementById("plcount").textContent = `Teraz gra ${i + 1}`;
+  document.getElementById("plcount").textContent = rateMode ? `Piosenka ${i + 1} z ${plq.length}` : `Teraz gra ${i + 1}`;
+  const ar = artistOf(x);
+  document.getElementById("plartist").textContent = ar ? "Wykonawca: " + ar : "";
   plShowNext();
   plShowFav();
   try {
-    setSession(mainTitle(x), kind, keyCover.get(keyOf.get(x.anime)) || "");
+    setSession(list[0], artistOf(x) ? artistOf(x) + " · " + kind : kind, cover);
     navigator.mediaSession.setActionHandler("play", () => { if (audio) audio.play().catch(() => {}); });
     navigator.mediaSession.setActionHandler("pause", () => { if (audio) audio.pause(); });
     navigator.mediaSession.setActionHandler("nexttrack", plNext);
@@ -957,6 +1070,140 @@ function rkRenderRes() {
     <div class="rk-ctl">${favs.has(x.name) ? `<span class="muted small">W ulubionych</span>` : `<button data-fa="${esc(x.name)}">Dodaj do ulubionych</button>`}<button data-act="play" data-n="${esc(x.name)}" aria-label="Odtwórz">${rkPlaying === x.name ? "■" : "▶"}</button></div></li>`).join("")}</ul>`;
   box.querySelectorAll("[data-fa]").forEach(b => b.onclick = () => { favs.add(b.dataset.fa); saveFavs(); const v = document.getElementById("rkq").value; rkRender(); const qi = document.getElementById("rkq"); qi.value = v; rkRenderRes(); });
   box.querySelectorAll("[data-act]").forEach(b => b.onclick = () => rkAct(b.dataset.act, b.dataset.n, b.dataset.t));
+}
+
+/* ---------- removal, rating, data backup ---------- */
+function arm(btn, fn) {
+  if (!btn) return;
+  const label = btn.textContent;
+  btn.onclick = () => {
+    if (btn.dataset.arm) { fn(); return; }
+    btn.dataset.arm = "1"; btn.textContent = "Na pewno? Dotknij jeszcze raz"; btn.classList.add("primary");
+    setTimeout(() => { if (document.body.contains(btn)) { delete btn.dataset.arm; btn.textContent = label; btn.classList.remove("primary"); } }, 4000);
+  };
+}
+function removeSong(x) {
+  removed.add(x.name); saveRemoved();
+  songs = songs.filter(y => y.name !== x.name);
+}
+function favToggleCurrent() {
+  const x = plq[pli]; if (!x) return;
+  if (favs.has(x.name)) favs.delete(x.name); else favs.add(x.name);
+  saveFavs(); plShowFav();
+}
+function ratingCounts() {
+  const c = { meh: 0, mid: 0, good: 0, peak: 0 }, names = new Set(songs.map(x => x.name));
+  for (const [n, v] of Object.entries(ratings)) if (names.has(n) && c[v] !== undefined) c[v]++;
+  return c;
+}
+function rateScreen(fresh) {
+  stopAudio(); $app.classList.remove("wide-pl");
+  const byName = new Map(songs.map(x => [x.name, x]));
+  if (fresh || !rate) {
+    const pool = songs.filter(x => (cfg.type === "both" || x.type === cfg.type) && !ratings[x.name]);
+    if (!pool.length) { home("Nie ma nic do ocenienia przy tych ustawieniach."); return; }
+    rate = { type: cfg.type, order: shuffle(pool).map(x => x.name), i: 0 };
+  } else {
+    const had = new Set(rate.order), kept = []; let ni = 0;
+    rate.order.forEach((n, k) => { if (byName.has(n)) { kept.push(n); if (k < rate.i) ni++; } });
+    const extra = shuffle(songs.filter(x => (rate.type === "both" || x.type === rate.type) && !ratings[x.name] && !had.has(x.name))).map(x => x.name);
+    rate.order = kept.concat(extra); rate.i = ni;
+  }
+  plq = rate.order.map(n => byName.get(n)).filter(Boolean);
+  if (rate.i >= plq.length) { lsSet("quiz-rate", rate); rateDone(); return; }
+  lsSet("quiz-rate", rate); rateMode = true;
+  const RC = { meh: "var(--bad)", mid: "var(--muted)", good: "var(--good)", peak: "var(--accent-text)" };
+  $app.innerHTML = `
+    <header class="row spread"><h1>Oceniarka</h1><button id="rback">Wróć</button></header>
+    <section class="card">
+      <div class="label" id="plcount"></div>
+      <div class="bar" aria-hidden="true"><i id="rbar" style="width:${Math.round(rate.i / plq.length * 100)}%"></i></div>
+      <div id="plvid" class="vidbox" hidden></div>
+      <div class="reveal-row"><img id="plcover" class="cover" alt="" referrerpolicy="no-referrer" hidden><div style="min-width:0"><div class="answer" id="pltitle"></div><p class="muted small" id="plalt"></p><p class="small" id="plartist"></p></div></div>
+      <div><span class="chip" id="plkind"></span></div>
+      <input id="seek" type="range" min="0" max="1" step="0.01" value="0" aria-label="Przewijanie">
+      <div class="row spread"><span class="timer" id="tm">0:00 / 0:00</span></div>
+      ${volHtml()}
+      <div class="row"><button id="plpp" class="primary" style="flex:1">Pauza</button><button id="fav" aria-pressed="false">☆ Do ulubionych</button></div>
+      <div class="label">Twoja ocena</div>
+      <div class="rate-grid">${[["meh", "Meh"], ["mid", "Mid"], ["good", "Good"], ["peak", "Peak"]].map(([k, t]) => `<button data-rate="${k}" style="color:${RC[k]}">${t}</button>`).join("")}</div>
+      <div class="row"><button id="rskip">Pomiń bez oceny</button><button id="plrm" class="small">Usuń na stałe</button></div>
+    </section>`;
+  bindSeek();
+  document.getElementById("rback").onclick = () => { stopAudio(); rateMode = false; home(); };
+  document.getElementById("plpp").onclick = () => { if (!audio) return; if (audio.paused) audio.play().catch(() => {}); else audio.pause(); };
+  document.getElementById("fav").onclick = favToggleCurrent;
+  document.querySelectorAll("[data-rate]").forEach(b => b.onclick = () => { const x = plq[pli]; if (!x) return; ratings[x.name] = b.dataset.rate; saveRatings(); rateAdvance(); });
+  document.getElementById("rskip").onclick = rateAdvance;
+  arm(document.getElementById("plrm"), () => { const x = plq[pli]; if (!x) return; removeSong(x); plq.splice(pli, 1); pli--; rateAdvance(); });
+  plPlay(rate.i);
+}
+function rateAdvance() {
+  rate.order = plq.map(x => x.name); rate.i = pli + 1; lsSet("quiz-rate", rate);
+  const bar = document.getElementById("rbar"); if (bar) bar.style.width = Math.round(rate.i / Math.max(1, plq.length) * 100) + "%";
+  if (rate.i >= plq.length) { rateDone(); return; }
+  plPlay(rate.i);
+}
+function rateDone() {
+  stopAudio(); rateMode = false;
+  const rc = ratingCounts();
+  $app.innerHTML = `
+    <header><div class="label">Koniec serii</div><h1>Wszystko przesłuchane</h1></header>
+    <section class="card"><p>Peak ${rc.peak} · Good ${rc.good} · Mid ${rc.mid} · Meh ${rc.meh}</p><p class="muted small">Oceny zapisują się w aplikacji i w kopii danych. Pominięte piosenki wrócą w nowej serii.</p></section>
+    <button id="rhome" class="primary big">Wróć</button>`;
+  document.getElementById("rhome").onclick = () => home();
+}
+function exportJson() {
+  return JSON.stringify({ v: 1, app: "quiz-anime", date: new Date().toISOString(), favs: [...favs], removed: [...removed], ratings, rank, stats }, null, 1);
+}
+function importData(txt) {
+  const d = JSON.parse(txt); if (!d || typeof d !== "object" || d.app !== "quiz-anime") throw new Error("to nie jest kopia z tej aplikacji");
+  (d.favs || []).forEach(n => favs.add(n)); saveFavs();
+  (d.removed || []).forEach(n => removed.add(n)); saveRemoved();
+  Object.assign(ratings, d.ratings || {}); saveRatings();
+  let rk = "zostawiony obecny";
+  if (d.rank && JSON.stringify(d.rank).includes(".mp3")) { rank = d.rank; rankInit(); saveRank(); rk = "zastąpiony wczytanym"; }
+  for (const [k, v] of Object.entries(d.stats || {})) { const c = stats[k] || { ok: 0, miss: 0 }; stats[k] = { ok: Math.max(c.ok, v.ok || 0), miss: Math.max(c.miss, v.miss || 0) }; }
+  lsSet("quiz-stats", stats);
+  return `Wczytano: ulubione ${(d.favs || []).length}, usunięte ${(d.removed || []).length}, oceny ${Object.keys(d.ratings || {}).length}. Ranking: ${rk}.`;
+}
+function dataScreen(msg) {
+  stopAudio(); rateMode = false;
+  const json = exportJson();
+  $app.innerHTML = `
+    <header class="row spread"><h1>Kopia danych</h1><button id="dback">Wróć</button></header>
+    ${msg ? `<p class="msg">${esc(msg)}</p>` : ""}
+    <section class="card"><h2>Eksport</h2>
+      <p class="muted small">Ulubione: ${favs.size}, usunięte: ${removed.size}, oceny: ${Object.keys(ratings).length}, plus ranking i statystyki. Plik kopii wrzucasz potem do skryptu zastosuj_zmiany.py na komputerze.</p>
+      <div class="row"><button id="dsave" class="primary">Zapisz do pliku</button><button id="dcopy">Kopiuj tekst</button></div>
+      <textarea id="dtxt" readonly rows="4" aria-label="Tekst kopii">${esc(json)}</textarea>
+      <p class="muted small" id="dnote">Jeśli plik się nie zapisze (np. w podglądzie w Claude), skopiuj tekst i wklej go do pliku kopia-quiz.json.</p>
+    </section>
+    <section class="card"><h2>Import</h2>
+      <p class="muted small">Dane scalają się z tym, co masz tutaj: ulubione, usunięte i oceny się sumują. Ranking zastępuje obecny tylko wtedy, gdy kopia zawiera jakieś piosenki.</p>
+      <label class="btn" style="text-align:center;display:block" for="dfile">Wczytaj plik kopii</label>
+      <input id="dfile" type="file" accept=".json,application/json" hidden>
+      <textarea id="dpaste" rows="3" placeholder="Albo wklej tutaj tekst kopii" aria-label="Wklej kopię"></textarea>
+      <button id="dgo">Wczytaj wklejony tekst</button>
+    </section>
+    <section class="card"><h2>Usunięte piosenki</h2>
+      <p class="muted small">Ukryte w aplikacji: ${removed.size}. Pliki zostają w pamięci przeglądarki, więc można je przywrócić.</p>
+      ${removed.size ? `<button id="drestore">Przywróć wszystkie</button>` : ""}
+    </section>`;
+  document.getElementById("dback").onclick = () => home();
+  document.getElementById("dsave").onclick = () => {
+    try { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([json], { type: "application/json" })); a.download = "kopia-quiz.json"; document.body.appendChild(a); a.click(); a.remove(); document.getElementById("dnote").textContent = "Jeśli plik nie pojawił się w Pobranych, skopiuj tekst."; } catch (e) {}
+  };
+  document.getElementById("dcopy").onclick = () => {
+    const t = document.getElementById("dtxt");
+    const sel = () => { t.select(); document.getElementById("dnote").textContent = "Tekst zaznaczony. Skopiuj go ręcznie."; };
+    try { navigator.clipboard.writeText(json).then(() => { document.getElementById("dnote").textContent = "Skopiowano do schowka."; }, sel); } catch (e) { sel(); }
+  };
+  const apply = async txt => { try { const m = importData(txt); await reload(); dataScreen(m); } catch (e) { dataScreen("Nie udało się wczytać kopii: " + ((e && e.message) || e)); } };
+  const df = document.getElementById("dfile"); df.onchange = async () => apply(await df.files[0].text());
+  document.getElementById("dgo").onclick = () => apply(document.getElementById("dpaste").value);
+  const dr = document.getElementById("drestore");
+  if (dr) arm(dr, async () => { removed = new Set(); saveRemoved(); await reload(); dataScreen("Przywrócono wszystkie usunięte piosenki."); });
 }
 
 /* ---------- boot ---------- */
