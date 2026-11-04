@@ -171,7 +171,7 @@ function parseName(file) {
 let songs = [];
 let animeNames = [];
 let stats = lsGet("quiz-stats", {});
-let cfg = Object.assign({ mode: "quick", type: "both", rounds: 10, source: "all", showNum: false }, lsGet("quiz-cfg", {}));
+let cfg = Object.assign({ mode: "quick", type: "both", rounds: 10, source: "all", showNum: false, smin: 0, smax: 10 }, lsGet("quiz-cfg", {}));
 let favs = new Set(lsGet("quiz-favs", []));
 let removed = new Set(lsGet("quiz-removed", []));
 const saveRemoved = () => lsSet("quiz-removed", [...removed]);
@@ -196,6 +196,10 @@ let pl = Object.assign({ type: "both", source: "all", vis: "bars", shuffle: true
 let plq = [], pli = -1, plTick = null;
 const saveFavs = () => lsSet("quiz-favs", [...favs]);
 let mar = lsGet("quiz-marathon", null);
+const scoreOf = s => { const k = keyOf.get(s.anime); if (!k || !String(k).startsWith("e:")) return 0; return Number((titles[Number(String(k).slice(2))] || {}).score) || 0; };
+const scoreOn = () => cfg.smin > 0 || cfg.smax < 10;
+const scoreOk = s => { if (!scoreOn()) return true; const v = scoreOf(s); return v > 0 && v >= cfg.smin && v <= cfg.smax; };
+const hasScores = () => !!(titles && titles.some(t => Number(t.score) > 0));
 const mainTitle = s => (keyTitles.get(keyOf.get(s.anime)) || [s.anime])[0];
 let titles = lsGet("quiz-titles", null);
 let aliasList = [], keyOf = new Map(), keyTitles = new Map(), keyCover = new Map(), matchedCount = 0;
@@ -294,6 +298,9 @@ function home(note) {
       <h2>Tryb gry</h2>
       ${seg("mode", [["quick", "Losowe rundy"], ["marathon", "Wszystkie po kolei"]], cfg.mode)}
       <div><div class="label">${cfg.mode === "quick" ? "Co losować" : "Co przejść (dla nowego przejścia)"}</div>${seg("type", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], cfg.type)}</div>
+      <div><div class="label">Zakres moich ocen z AniList</div>
+        ${hasScores() ? `<div class="row" style="flex-wrap:nowrap;align-items:center"><span class="small">od</span><select id="smin" aria-label="Ocena od">${[0,1,2,3,4,5,6,7,8,9,10].map(v => `<option value="${v}" ${cfg.smin === v ? "selected" : ""}>${v ? v : "bez limitu"}</option>`).join("")}</select><span class="small">do</span><select id="smax" aria-label="Ocena do">${[1,2,3,4,5,6,7,8,9,10].map(v => `<option value="${v}" ${cfg.smax === v ? "selected" : ""}>${v}</option>`).join("")}</select></div>
+        <p class="muted small" id="scnt"></p>` : `<p class="muted small">${titles ? "Tytuły nie mają Twoich ocen. Kliknij „Pobierz” z AniList wyżej, to pobierze też oceny." : "Najpierw pobierz tytuły z AniList (wyżej), wtedy pobiorą się też Twoje oceny."}</p>`}</div>
       ${cfg.mode === "quick" ? `
         <div><div class="label">Liczba rund</div>${seg("rounds", [[10, "10"], [20, "20"], [50, "50"], [0, "Bez końca"]], cfg.rounds)}</div>
         <div><div class="label">Pula</div>${seg("source", [["all", "Wszystkie"], ["miss", `Moje błędy (${miss})`], ["fav", `Ulubione (${nFav})`]], cfg.source)}</div>`
@@ -330,6 +337,14 @@ function home(note) {
     const k = b.dataset.set; cfg[k] = (k === "type" || k === "source" || k === "mode") ? b.dataset.v : Number(b.dataset.v);
     saveCfg(); home();
   });
+  const smin = document.getElementById("smin"), smax = document.getElementById("smax");
+  if (smin && smax) {
+    const upd = () => { const n = songs.filter(x => (cfg.type === "both" || x.type === cfg.type) && scoreOk(x)).length;
+      document.getElementById("scnt").textContent = scoreOn() ? `Pasuje ${n} piosenek. Piosenki anime bez oceny (albo bez dopasowania do AniList) są wtedy pomijane. Działa też w odtwarzaczu.` : "Bez limitu: wszystkie piosenki, także z anime bez oceny."; };
+    smin.onchange = () => { cfg.smin = Number(smin.value); if (cfg.smax < cfg.smin) { cfg.smax = cfg.smin; smax.value = cfg.smax; } saveCfg(); upd(); };
+    smax.onchange = () => { cfg.smax = Number(smax.value); if (cfg.smin > cfg.smax) { cfg.smin = cfg.smax; smin.value = cfg.smin; } saveCfg(); upd(); };
+    upd();
+  }
   const sn = document.getElementById("shownum"); if (sn) sn.onchange = () => { cfg.showNum = sn.checked; saveCfg(); };
   const st = document.getElementById("start"); if (st) st.onclick = startGame;
   const sm = document.getElementById("startm"); if (sm) sm.onclick = () => startMarathon(true);
@@ -375,7 +390,7 @@ window.addEventListener("unhandledrejection", e => { const o = document.getEleme
 window.addEventListener("error", e => { const o = document.getElementById("imp"); if (o) o.textContent = "Błąd: " + e.message; });
 
 function startGame() {
-  let pool = songs.filter(s => cfg.type === "both" || s.type === cfg.type);
+  let pool = songs.filter(s => (cfg.type === "both" || s.type === cfg.type) && scoreOk(s));
   if (cfg.source === "miss") { const m = missedAnime(); pool = pool.filter(s => m.has(s.anime)); }
   if (cfg.source === "fav") pool = pool.filter(s => favs.has(s.name));
   if (!pool.length) { home("Brak piosenek do wylosowania przy tych ustawieniach."); return; }
@@ -386,8 +401,8 @@ function startGame() {
 function startMarathon(fresh) {
   const byName = new Map(songs.map(s => [s.name, s]));
   if (fresh || !mar) {
-    const pool = songs.filter(s => cfg.type === "both" || s.type === cfg.type);
-    if (!pool.length) { home("Brak piosenek tego typu."); return; }
+    const pool = songs.filter(s => (cfg.type === "both" || s.type === cfg.type) && scoreOk(s));
+    if (!pool.length) { home("Brak piosenek przy tych ustawieniach (typ i zakres ocen)."); return; }
     mar = { type: cfg.type, order: shuffle(pool).map(s => s.name), i: 0, ok: 0, n: 0, wrong: [] };
   } else {
     const had = new Set(mar.order), kept = []; let ni = 0;
@@ -419,7 +434,7 @@ function round() {
       <div class="row spread"><span class="timer" id="tm">0.0 / 0,5 s</span><span class="muted small">Z którego anime jest ten utwór?</span></div>
       <div class="row">
         <button id="pp">Pauza</button>
-        <button id="again">Odtwórz</button>
+        <button id="again">Powtórz</button>
         <button id="more"></button>
       </div>
       ${volHtml()}
@@ -438,9 +453,9 @@ function round() {
     answer(exact ? exact.text : first ? first.text : inp.value);
   };
   bindSeek();
-  document.getElementById("again").onclick = playClip;
   document.getElementById("pp").onclick = togglePause;
-  document.getElementById("more").onclick = () => { if (game.cur.stage < STAGES.length - 1) { game.cur.stage++; updateMore(); const t = document.getElementById("tm"); if (t && (!audio || audio.paused)) t.textContent = `0,0 / ${fs(STAGES[game.cur.stage])} s`; } };
+  document.getElementById("again").onclick = playClip;
+  document.getElementById("more").onclick = () => { const c = game.cur; if (c.answered || c.stage >= STAGES.length - 1) return; c.stage++; updateMore(); playClip(); };
   document.getElementById("idk").onclick = () => answer(null);
   document.getElementById("quit").onclick = () => { stopAudio(); if (game.mode === "marathon" || !game.log.length) home(); else result(); };
   setSession("Zgadnij anime", "Quiz", "");
@@ -495,9 +510,7 @@ function playClip() {
 function togglePause() {
   if (!audio) { if (game.cur && !game.cur.answered) playClip(); return; }
   const c = game.cur;
-  if (audio.paused) {
-    if (!c.answered && audio.currentTime >= c.stopAt - 0.05) playClip(); else audio.play().catch(() => {});
-  } else audio.pause();
+  if (audio.paused) audio.play().catch(() => {}); else audio.pause();
 }
 function bindSeek() {
   bindVol();
@@ -519,7 +532,7 @@ function onTick() {
   }
   if (tm) tm.textContent = free ? `${fmt(t)} / ${fmt(dur)}` : `${Math.min(t, len).toFixed(1).replace(".", ",")} / ${fs(audio.paused ? STAGES[c.stage] : len)} s`;
   if (t >= len && !audio.paused) audio.pause();
-  if (pp) pp.textContent = audio.paused && !(t >= len && !c.answered) ? "Wznów" : audio.paused ? "Odtwórz" : "Pauza";
+  if (pp) pp.textContent = audio.paused ? "Wznów" : "Pauza";
 }
 const fmt = x => Math.floor(x / 60) + ":" + String(Math.floor(x % 60)).padStart(2, "0");
 
@@ -629,7 +642,7 @@ function favScreen() {
 
 /* ---------- player ---------- */
 function plPool() {
-  let pool = songs.filter(x => pl.type === "both" || x.type === pl.type);
+  let pool = songs.filter(x => (pl.type === "both" || x.type === pl.type) && scoreOk(x));
   if (pl.source === "fav") pool = pool.filter(x => favs.has(x.name));
   return pool;
 }
@@ -646,6 +659,7 @@ function playerScreen() {
     <section class="card pl-set">
       <div><div class="label">Co odtwarzać</div>${segp("plType", [["both", "OP i ED"], ["OP", "Openingi"], ["ED", "Endingi"]], pl.type)}</div>
       <div><div class="label">Źródło</div>${segp("plSrc", [["all", "Wszystkie"], ["fav", `Ulubione (${nFav})`]], pl.source)}</div>
+      ${scoreOn() ? `<p class="muted small">Filtr ocen: ${cfg.smin || 1}–${cfg.smax}. Zmienisz go na ekranie głównym.</p>` : ""}
     </section>
     ${pool.length ? `
     <section class="card pl-now">
@@ -885,7 +899,7 @@ async function fetchTitles() {
   if (!u) { msg("Wpisz nick z AniList."); return; }
   alUser = u; lsSet("quiz-aluser", u);
   msg("Pobieram tytuły z AniList…");
-  const q = "query ($user: String) { MediaListCollection(userName: $user, type: ANIME) { lists { entries { status media { id title { romaji english native } synonyms coverImage { large } } } } } }";
+  const q = "query ($user: String) { MediaListCollection(userName: $user, type: ANIME) { lists { entries { status score(format: POINT_10_DECIMAL) media { id title { romaji english native } synonyms coverImage { large } } } } } }";
   try {
     const r = await fetch("https://graphql.anilist.co", { method: "POST", headers: { "Content-Type": "application/json", "Accept": "application/json" }, body: JSON.stringify({ query: q, variables: { user: u } }) });
     const j = await r.json();
@@ -895,7 +909,7 @@ async function fetchTitles() {
       if (e.status === "DROPPED" || e.status === "PLANNING") continue;
       const m = e.media; if (seen.has(m.id)) continue; seen.add(m.id);
       const t = m.title || {};
-      out.push({ id: m.id, english: t.english || "", romaji: t.romaji || "", native: t.native || "", synonyms: m.synonyms || [], cover: (m.coverImage && m.coverImage.large) || "" });
+      out.push({ id: m.id, english: t.english || "", romaji: t.romaji || "", native: t.native || "", synonyms: m.synonyms || [], cover: (m.coverImage && m.coverImage.large) || "", score: Number(e.score) || 0 });
     }
     if (!out.length) throw new Error("lista jest pusta albo prywatna");
     titles = out; lsSet("quiz-titles", out); buildAliases();
@@ -1136,7 +1150,13 @@ function dataScreen(msg) {
     </section>
     <section class="card"><h2>Usunięte piosenki</h2>
       <p class="muted small">Ukryte w aplikacji: ${removed.size}. Pliki zostają w pamięci przeglądarki, więc można je przywrócić.</p>
-      ${removed.size ? `<button id="drestore">Przywróć wszystkie</button>` : ""}
+      ${removed.size ? `<details open><summary>Lista (${removed.size})</summary>
+        <textarea id="rmtxt" readonly rows="6" aria-label="Lista usuniętych">${esc([...removed].map(stemOf).sort((a, b) => a.localeCompare(b)).join("\n"))}</textarea>
+        <div class="row"><button id="rmcopy">Kopiuj listę</button></div>
+        <div class="label">Przywróć pojedynczą</div>
+        ${[...removed].sort((a, b) => a.localeCompare(b)).map((n, i) => `<div class="row spread" style="flex-wrap:nowrap"><span class="small" style="min-width:0;overflow-wrap:anywhere">${esc(stemOf(n))}</span><button class="small" data-rm="${i}">Przywróć</button></div>`).join("")}
+      </details>
+      <button id="drestore">Przywróć wszystkie</button>` : ""}
     </section>`;
   document.getElementById("dback").onclick = () => home();
   document.getElementById("dsave").onclick = () => {
@@ -1150,6 +1170,11 @@ function dataScreen(msg) {
   const apply = async txt => { try { const m = importData(txt); await reload(); dataScreen(m); } catch (e) { dataScreen("Nie udało się wczytać kopii: " + ((e && e.message) || e)); } };
   const df = document.getElementById("dfile"); df.onchange = async () => apply(await df.files[0].text());
   document.getElementById("dgo").onclick = () => apply(document.getElementById("dpaste").value);
+  const rmList = [...removed].sort((a, b) => a.localeCompare(b));
+  document.querySelectorAll("[data-rm]").forEach(b => b.onclick = async () => { removed.delete(rmList[Number(b.dataset.rm)]); saveRemoved(); await reload(); dataScreen("Przywrócono 1 piosenkę."); });
+  const rc2 = document.getElementById("rmcopy");
+  if (rc2) rc2.onclick = () => { const t = document.getElementById("rmtxt"); const sel = () => { t.select(); rc2.textContent = "Zaznaczone, skopiuj ręcznie"; };
+    try { navigator.clipboard.writeText(t.value).then(() => { rc2.textContent = "Skopiowano"; }, sel); } catch (e) { sel(); } };
   const dr = document.getElementById("drestore");
   if (dr) arm(dr, async () => { removed = new Set(); saveRemoved(); await reload(); dataScreen("Przywrócono wszystkie usunięte piosenki."); });
 }
